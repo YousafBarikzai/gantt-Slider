@@ -283,19 +283,14 @@
              *  All the placeholder values below are meant to be changed by you.
              * ===================================================================== */
 
-            // 1) Core team. Each name becomes a named login in the dropdown,
-            //    and they ALL share the single password below.
-            const TEAM_MEMBERS = [
-                'Yousaf', // 👈 you (admin)
-                'Team Member 2',
-                'Team Member 3',
-                'Team Member 4',
-            ];
+            // NOTE: The core-team members and the shared password now live on the
+            // SERVER (see server/db.js seed + the TEAM_PASSWORD env var). The login
+            // dropdown below is filled in live from the backend, and the password is
+            // verified server-side. Admins add new members by approving access
+            // requests. The only thing left to configure here is the optional
+            // EmailJS notification.
 
-            // 2) The single shared password for every core-team login.
-            const SHARED_PASSWORD = 'changeme';
-
-            // 3) EmailJS settings — used to email account requests to you and to
+            // EmailJS settings — used to email account requests to you and to
             //    send the applicant a "please bear with us" auto-reply.
             //    Create a free account at https://www.emailjs.com, then paste your
             //    Public Key, Service ID and two Template IDs below.
@@ -312,45 +307,71 @@
 
             /* ===================================================================== */
 
-            const AUTH_KEY = 'gantt_auth';
-
-            // ---- Core team login dropdown ----
             const userSelect = document.getElementById('team-user');
-            for (const name of TEAM_MEMBERS) {
-                const opt = document.createElement('option');
-                opt.value = name;
-                opt.textContent = name;
-                userSelect.appendChild(opt);
-            }
 
-            function signIn(role, name) {
-                sessionStorage.setItem(
-                    AUTH_KEY,
-                    JSON.stringify({ role, name, at: Date.now() }),
-                );
+            // If already signed in, go straight to the board.
+            fetch('/api/me', { credentials: 'same-origin' })
+                .then((r) => r.json())
+                .then((d) => {
+                    if (d.user) window.location.replace('index.html');
+                })
+                .catch(() => {});
+
+            // ---- Core team login dropdown (live from the backend) ----
+            fetch('/api/users', { credentials: 'same-origin' })
+                .then((r) => (r.ok ? r.json() : []))
+                .then((members) => {
+                    userSelect.innerHTML = '';
+                    for (const m of members) {
+                        const opt = document.createElement('option');
+                        opt.value = m.name;
+                        opt.textContent =
+                            m.name + (m.role === 'admin' ? ' (admin)' : '');
+                        userSelect.appendChild(opt);
+                    }
+                })
+                .catch(() => {
+                    userSelect.innerHTML =
+                        '<option>Could not reach server</option>';
+                });
+
+            async function postLogin(body) {
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.error || 'Sign-in failed');
+                }
                 window.location.href = 'index.html';
             }
 
-            document.getElementById('team-login').addEventListener(
-                'submit',
-                (e) => {
+            document
+                .getElementById('team-login')
+                .addEventListener('submit', async (e) => {
                     e.preventDefault();
                     const error = document.getElementById('login-error');
-                    const name = userSelect.value;
-                    const pw = document.getElementById('team-password').value;
-                    if (pw === SHARED_PASSWORD) {
-                        signIn('member', name);
-                    } else {
-                        error.textContent =
-                            'Incorrect password. Please try again.';
+                    error.classList.add('d-none');
+                    try {
+                        await postLogin({
+                            name: userSelect.value,
+                            password:
+                                document.getElementById('team-password').value,
+                        });
+                    } catch (err) {
+                        error.textContent = err.message;
                         error.classList.remove('d-none');
                     }
-                },
-            );
+                });
 
             document
                 .getElementById('guest-login')
-                .addEventListener('click', () => signIn('guest', 'Guest'));
+                .addEventListener('click', () =>
+                    postLogin({ guest: true }).catch(() => {}),
+                );
 
             // ---- Request-account form (EmailJS) ----
             const isConfigured = !Object.values(EMAILJS).some((v) =>
@@ -384,27 +405,42 @@
                         .value.trim(),
                 };
 
-                // Always keep a local copy as a backup.
-                const pending = JSON.parse(
-                    localStorage.getItem('gantt_access_requests') || '[]',
-                );
-                pending.push({ ...data, at: new Date().toISOString() });
-                localStorage.setItem(
-                    'gantt_access_requests',
-                    JSON.stringify(pending),
-                );
+                requestSubmit.disabled = true;
+                requestSubmit.textContent = 'Sending…';
 
-                if (!isConfigured || !window.emailjs) {
+                // 1) Always record the request on the server so the admin sees it
+                //    on their dashboard (this is the source of truth).
+                try {
+                    const res = await fetch('/api/access-requests', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data),
+                    });
+                    if (!res.ok) throw new Error('Server rejected the request');
+                } catch (err) {
+                    console.error(err);
                     showFeedback(
-                        'Your request has been recorded. (Email delivery is not configured yet — set your EmailJS keys in login.html to send it automatically.)',
-                        'warning',
+                        'Sorry, we could not submit your request right now. Please try again later.',
+                        'danger',
                     );
-                    requestForm.reset();
+                    requestSubmit.disabled = false;
+                    requestSubmit.textContent = 'Send request';
                     return;
                 }
 
-                requestSubmit.disabled = true;
-                requestSubmit.textContent = 'Sending…';
+                // 2) Optionally also fire the EmailJS notification + auto-reply.
+                if (!isConfigured || !window.emailjs) {
+                    showFeedback(
+                        'Thanks! Your request has been sent to ' +
+                            ADMIN_NAME +
+                            '. Please bear with us until your access is granted.',
+                        'success',
+                    );
+                    requestForm.reset();
+                    requestSubmit.disabled = false;
+                    requestSubmit.textContent = 'Send request';
+                    return;
+                }
 
                 // Fields available to both EmailJS templates.
                 const params = {

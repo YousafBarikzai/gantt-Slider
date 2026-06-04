@@ -7,6 +7,8 @@
     "scripts": {
         "dev": "vite build --watch",
         "build": "vite build",
+        "server": "node server/index.js",
+        "start": "npm run build && node server/index.js",
         "lint": "eslint src/**/*.js",
         "prettier": "prettier --write \"{src/**/,tests/*,rollup.config}.{js,css}\"",
         "prettier-check": "prettier --check \"{src/*,tests/*,rollup.config}.{js,css}\""
@@ -54,5 +56,8 @@
     ],
     "sideEffects": [
         "*.css"
-    ]
+    ],
+    "dependencies": {
+        "express": "^4.22.2"
+    }
 }

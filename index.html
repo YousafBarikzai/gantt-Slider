@@ -2,22 +2,8 @@
 <html lang="en">
     <head>
         <meta charset="UTF-8" />
-        <title>Simple Gantt</title>
-        <!-- Auth guard: bounce to the login splash if not signed in. Runs first. -->
-        <script>
-            (function () {
-                try {
-                    var auth = JSON.parse(
-                        sessionStorage.getItem('gantt_auth') || 'null',
-                    );
-                    if (!auth || !auth.role) {
-                        window.location.replace('login.html');
-                    }
-                } catch (e) {
-                    window.location.replace('login.html');
-                }
-            })();
-        </script>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Board · Project Planner</title>
         <link rel="stylesheet" href="dist/frappe-gantt.css" />
         <link
             href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
@@ -26,787 +12,363 @@
             crossorigin="anonymous"
         />
         <style>
-            .container {
-                width: 90%;
-                margin: 0 auto;
+            body {
+                margin: 0;
+                font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+                background: #f8fafc;
             }
-
-            .chart {
-                border: 1px dotted black;
-                border-radius: 4px;
-                height: fit-content;
-            }
-
-            .chart.active {
-                filter: drop-shadow(1px 1px 4px rgba(0, 0, 0, 0.6));
-                border: unset;
-            }
-
-            small {
-                font-size: 0.775em;
-            }
-
-            .app-topbar {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 1rem;
-                padding: 0.6rem 1.5rem;
-                background: #0f172a;
-                color: #fff;
-            }
-            .app-topbar .brand {
-                font-weight: 600;
-            }
-            .app-topbar .user-meta {
+            .toolbar {
                 display: flex;
                 align-items: center;
                 gap: 0.75rem;
-                font-size: 0.9rem;
+                padding: 0.75rem 1.5rem;
+                background: #fff;
+                border-bottom: 1px solid #e2e8f0;
+                flex-wrap: wrap;
             }
-            .role-badge {
-                font-size: 0.7rem;
-                text-transform: uppercase;
-                letter-spacing: 0.04em;
-                padding: 0.15rem 0.5rem;
-                border-radius: 999px;
-                background: #2563eb;
+            .toolbar h2 {
+                font-size: 1.1rem;
+                margin: 0;
+                flex: 1;
             }
-            .role-badge.guest {
-                background: #64748b;
+            #gantt-wrap {
+                margin: 1.25rem 1.5rem;
+                background: #fff;
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+                overflow: auto;
             }
-            .readonly-banner {
-                background: #fef3c7;
-                color: #92400e;
-                text-align: center;
-                padding: 0.5rem 1rem;
-                font-size: 0.85rem;
-                border-bottom: 1px solid #fde68a;
+            /* Status-based bar colours */
+            .bar-Backlog .bar { fill: #94a3b8; }
+            .bar-ToDo .bar { fill: #38bdf8; }
+            .bar-InProgress .bar { fill: #2563eb; }
+            .bar-Review .bar { fill: #f59e0b; }
+            .bar-Done .bar { fill: #22c55e; }
+
+            .status-pill, .prio-pill {
+                font-size: 0.72rem; padding: 0.15rem 0.55rem;
+                border-radius: 999px; font-weight: 600;
             }
+            .panel-section { border-top: 1px solid #e2e8f0; padding-top: 1rem; margin-top: 1rem; }
+            .comment {
+                background: #f1f5f9; border-radius: 8px; padding: 0.6rem 0.8rem;
+                margin-bottom: 0.6rem;
+            }
+            .comment .meta { font-size: 0.72rem; color: #64748b; margin-bottom: 0.2rem; }
+            .history-item {
+                font-size: 0.82rem; padding: 0.4rem 0; border-bottom: 1px dashed #e2e8f0;
+                color: #334155;
+            }
+            .history-item .when { color: #94a3b8; font-size: 0.72rem; }
         </style>
-        <script src="dist/frappe-gantt.umd.js"></script>
     </head>
     <body>
-        <div class="app-topbar">
-            <span class="brand">Project Planner</span>
-            <div class="user-meta">
-                <span id="user-name"></span>
-                <span class="role-badge" id="role-badge"></span>
-                <button
-                    id="logout-btn"
-                    class="btn btn-sm btn-outline-light"
-                >
-                    Log out
-                </button>
-            </div>
+        <div id="app-nav" class="app-nav"></div>
+
+        <div class="toolbar">
+            <h2>Project Timeline</h2>
+            <select id="view-mode" class="form-select form-select-sm" style="width:auto">
+                <option>Day</option>
+                <option selected>Week</option>
+                <option>Month</option>
+            </select>
+            <button id="today-btn" class="btn btn-sm btn-outline-secondary">Today</button>
+            <button id="add-task-btn" class="btn btn-sm btn-primary">+ New task</button>
         </div>
+
+        <div id="gantt-wrap"><svg id="gantt"></svg></div>
+
+        <!-- ===== Task detail panel ===== -->
         <div
-            class="readonly-banner d-none"
-            id="readonly-banner"
+            class="offcanvas offcanvas-end"
+            tabindex="-1"
+            id="task-panel"
+            style="width: 460px"
         >
-            👁️ You're viewing as a <strong>guest</strong> — all pages are
-            read-only. Sign in as a team member to make changes.
-        </div>
-        <div class="container">
-            <h1 class="text-center pt-3 pb-2 font-serif">Frappe Gantt</h1>
-            <hr />
-            <div class="row my-5">
-                <div class="col-md-3 px-5 py-1">
-                    <h3 class="text-center">Set edit access</h3>
-                    <p>
-                        Easy make sure your employees change <em>only</em> what
-                        they need to.
-                    </p>
-                    <div class="form-check form-switch">
-                        <input
-                            class="form-check-input"
-                            type="checkbox"
-                            role="switch"
-                            id="mutable-general"
-                            checked
-                        />
-                        <label class="form-check-label" for="mutable-general"
-                            >Editable</label
-                        >
-                    </div>
-                    <div class="form-check form-switch">
-                        <input
-                            class="form-check-input"
-                            type="checkbox"
-                            role="switch"
-                            id="mutable-progress"
-                            checked
-                        />
-                        <label class="form-check-label" for="mutable-general"
-                            >Progress editable</label
-                        >
-                    </div>
-                    <div class="form-check form-switch">
-                        <input
-                            class="form-check-input"
-                            type="checkbox"
-                            role="switch"
-                            id="mutable-dates"
-                            checked
-                        />
-                        <label class="form-check-label" for="mutable-general"
-                            >Dates editable</label
-                        >
-                    </div>
-                </div>
-
-                <div class="chart col-md-9" id="mutability"></div>
+            <div class="offcanvas-header">
+                <h5 class="offcanvas-title" id="panel-title">Task</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
             </div>
-            <div class="row my-5">
-                <div class="chart col-md-9" id="sideheader"></div>
-                <div class="col-md-3 px-5 py-1">
-                    <h3 class="text-center">Versatile Actions</h3>
-                    <p>
-                        Change the view mode, or scroll to today, or add
-                        anything you like <sup>β</sup>.
-                    </p>
-                    <div class="form-check form-switch">
-                        <input
-                            class="form-check-input"
-                            type="checkbox"
-                            role="switch"
-                            id="toggle-today"
-                            checked
-                        />
-                        <label class="form-check-label" for="mutable-general"
-                            >Scroll to Today</label
-                        >
-                    </div>
-                    <div class="form-check form-switch">
-                        <input
-                            class="form-check-input"
-                            type="checkbox"
-                            role="switch"
-                            id="toggle-view-mode"
-                            checked
-                        />
-                        <label class="form-check-label" for="mutable-general"
-                            >Change View Mode</label
-                        >
-                    </div>
+            <div class="offcanvas-body">
+                <div class="mb-2">
+                    <label class="form-label small fw-semibold">Title</label>
+                    <input id="f-name" class="form-control form-control-sm" />
                 </div>
-            </div>
-
-            <div class="row my-5">
-                <div class="col-md-3 px-5 py-1">
-                    <h3 class="text-center">Mark Holidays</h3>
-                    <p>
-                        Be it public holidays, company milestones, or just
-                        weekends, you can see it all.
-                    </p>
-                    <div class="form-check form-switch">
-                        <input
-                            class="form-check-input"
-                            type="checkbox"
-                            role="switch"
-                            id="toggle-weekends"
-                        />
-                        <label class="form-check-label" for="toggle-weekends"
-                            >Show weekends</label
-                        >
-                    </div>
-                    <div class="form-check form-switch">
-                        <input
-                            class="form-check-input"
-                            type="checkbox"
-                            role="switch"
-                            id="custom-weekends"
-                        />
-                        <label class="form-check-label" for="custom-weekends"
-                            >Custom weekends</label
-                        >
-                    </div>
-                </div>
-                <div class="chart col-md-9" id="holidays"></div>
-            </div>
-
-            <div class="row my-5">
-                <div class="col-md-3 px-5 py-1">
-                    <h3 class="text-center">...or <em>ignore</em> them</h3>
-                    <p>
-                        Remove time periods from your Gantt - they're now
-                        completely ignored.
-                    </p>
-                    <div class="form-check form-switch">
-                        <input
-                            class="form-check-input"
-                            type="checkbox"
-                            role="switch"
-                            id="ignore-weekends"
-                            checked
-                        />
-                        <label class="form-check-label" for="toggle-weekends"
-                            >Ignore weekends</label
-                        >
-                    </div>
-                </div>
-                <div class="chart col-md-9" id="ignore"></div>
-            </div>
-            <div class="row my-4">
-                <div class="col-md-9 chart" id="styling"></div>
-                <div class="col-md-3 px-4">
-                    <h3 class="text-center">Control the styles completely.</h3>
-                    <strong>Modify Grid</strong>
-                    <div class="input-group row">
-                        <label
-                            for="grid-height"
-                            class="form-label col-sm-5 col-form-label"
-                            ><small>Grid Height:</small></label
-                        >
-                        <div class="col-sm-7">
-                            <input
-                                id="grid-height"
-                                class="form-range align-items-end"
-                                type="range"
-                                min="150"
-                                max="600"
-                                value="300"
-                            />
-                        </div>
-                    </div>
-                    <div class="input-group row">
-                        <label
-                            for="padding"
-                            class="form-label col-sm-5 col-form-label"
-                            ><small>Padding:</small></label
-                        >
-                        <div class="col-sm-7">
-                            <input
-                                id="padding"
-                                class="form-range align-items-end"
-                                type="range"
-                                min="3"
-                                max="50"
-                                value="18"
-                            />
-                        </div>
-                    </div>
-                    <div class="input-group row">
-                        <label
-                            for="column-width"
-                            class="form-label col-sm-5 col-form-label"
-                            ><small>Column Width:</small></label
-                        >
-                        <div class="col-sm-7">
-                            <input
-                                id="column-width"
-                                class="form-range align-items-end"
-                                type="range"
-                                min="30"
-                                max="70"
-                                value="30"
-                            />
-                        </div>
-                    </div>
-                    <div class="pt-3">
-                        <strong>Modify Bar</strong>
-                    </div>
-                    <div class="input-group row">
-                        <label
-                            for="bar-height"
-                            class="form-label col-sm-5 col-form-label"
-                            ><small>Height:</small></label
-                        >
-                        <div class="col-sm-7">
-                            <input
-                                id="bar-height"
-                                class="form-range align-items-end"
-                                type="range"
-                                min="10"
-                                max="100"
-                                value="30"
-                            />
-                        </div>
-                    </div>
-                    <div class="input-group row">
-                        <label
-                            for="bar-radius"
-                            class="form-label col-sm-5 col-form-label"
-                            ><small>Radius:</small></label
-                        >
-                        <div class="col-sm-7">
-                            <input
-                                id="bar-radius"
-                                class="form-range align-items-end"
-                                type="range"
-                                min="1"
-                                max="50"
-                                value="3"
-                            />
-                        </div>
-                    </div>
-                    <div class="input-group row">
-                        <label
-                            for="arrow-curve"
-                            class="form-label col-sm-5 col-form-label"
-                            ><small>Arrow curving:</small></label
-                        >
-                        <div class="col-sm-7">
-                            <input
-                                id="arrow-curve"
-                                class="form-range align-items-end"
-                                type="range"
-                                min="1"
-                                max="50"
-                                value="3"
-                            />
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="row my-4">
-                <div class="col-md-3">
-                    <h2>Frappe Gantt - <em>for you</em>.</h2>
-                    <p>
-                        Insane levels of customizability - change anything,
-                        everything.
-                    </p>
-                    <div class="input-group">
-                        <label class="input-group-text">Snap By: </label>
-                        <input
-                            class="form-control"
-                            id="snap-at-qty"
-                            type="number"
-                            value="1"
-                        />
-                        <select class="form-select" id="snap-at-scale">
-                            <option value="s">Second</option>
-                            <option value="min">Minute</option>
-                            <option value="h">Hour</option>
-                            <option value="d" selected>Day</option>
-                            <option value="m">Month</option>
-                            <option value="y">Year</option>
+                <div class="row g-2">
+                    <div class="col-6">
+                        <label class="form-label small fw-semibold">Status</label>
+                        <select id="f-status" class="form-select form-select-sm">
+                            <option>Backlog</option><option>To Do</option>
+                            <option>In Progress</option><option>Review</option>
+                            <option>Done</option>
                         </select>
                     </div>
-                    <div class="form-check form-switch my-2">
-                        <label class="form-check-label" for="auto-move-label"
-                            >Toggle auto-moving label</label
-                        >
-                        <input
-                            class="form-check-input"
-                            type="checkbox"
-                            role="switch"
-                            id="auto-move-label"
-                        />
+                    <div class="col-6">
+                        <label class="form-label small fw-semibold">Priority</label>
+                        <select id="f-priority" class="form-select form-select-sm">
+                            <option>Low</option><option>Medium</option>
+                            <option>High</option><option>Critical</option>
+                        </select>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small fw-semibold">Assignee</label>
+                        <select id="f-assignee" class="form-select form-select-sm"></select>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small fw-semibold">Progress</label>
+                        <input id="f-progress" type="number" min="0" max="100"
+                               class="form-control form-control-sm" />
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small fw-semibold">Start</label>
+                        <input id="f-start" type="date" class="form-control form-control-sm" />
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small fw-semibold">End</label>
+                        <input id="f-end" type="date" class="form-control form-control-sm" />
                     </div>
                 </div>
-                <div class="col-md-9 chart" id="advanced"></div>
+                <div class="mt-2">
+                    <label class="form-label small fw-semibold">Description / criteria</label>
+                    <textarea id="f-description" rows="3" class="form-control form-control-sm"></textarea>
+                </div>
+                <div class="d-flex gap-2 mt-2" id="panel-actions">
+                    <button id="save-task" class="btn btn-sm btn-primary">Save changes</button>
+                    <button id="delete-task" class="btn btn-sm btn-outline-danger ms-auto">Delete</button>
+                </div>
+
+                <!-- Discussion -->
+                <div class="panel-section">
+                    <h6 class="fw-bold">Discussion</h6>
+                    <div id="comments"></div>
+                    <div id="comment-box" class="input-group input-group-sm mt-2">
+                        <input id="comment-input" class="form-control" placeholder="Add a comment…" />
+                        <button id="comment-send" class="btn btn-primary">Post</button>
+                    </div>
+                </div>
+
+                <!-- History -->
+                <div class="panel-section">
+                    <h6 class="fw-bold">History</h6>
+                    <div id="history"></div>
+                </div>
             </div>
         </div>
-        <script type="module">
-            // ---- Session / role ----
-            const AUTH = JSON.parse(
-                sessionStorage.getItem('gantt_auth') || 'null',
-            );
-            const isGuest = !AUTH || AUTH.role === 'guest';
-            // Spread into every Gantt so guests cannot drag, resize or edit.
-            const ro = isGuest ? { readonly: true } : {};
 
-            document.getElementById('user-name').textContent = AUTH
-                ? AUTH.name
-                : 'Guest';
-            const badge = document.getElementById('role-badge');
-            badge.textContent = isGuest ? 'Guest' : 'Team';
-            if (isGuest) badge.classList.add('guest');
-            document.getElementById('logout-btn').onclick = () => {
-                sessionStorage.removeItem('gantt_auth');
-                window.location.replace('login.html');
-            };
-            if (isGuest) {
-                document
-                    .getElementById('readonly-banner')
-                    .classList.remove('d-none');
-                // Disable every interactive control on the page for guests.
-                document
-                    .querySelectorAll(
-                        '.container input, .container select, .container textarea, .container button',
-                    )
-                    .forEach((el) => {
-                        el.disabled = true;
-                    });
-            }
-
-            const rawToday = new Date();
-            const today =
-                Date.UTC(
-                    rawToday.getFullYear(),
-                    rawToday.getMonth(),
-                    rawToday.getDate(),
-                ) +
-                new Date().getTimezoneOffset() * 60000;
-
-            function random(begin = 10, end = 90, multiple = 10) {
-                let k;
-                do {
-                    k = Math.floor(Math.random() * 100);
-                } while (k < begin || k > end || k % multiple !== 0);
-                return k;
-            }
-
-            const daysSince = (dx) => new Date(today + dx * 86400000);
-            let tasks = [
-                {
-                    start: daysSince(-2),
-                    end: daysSince(2),
-                    name: 'Redesign website',
-                    id: 'Task 0',
-                    progress: random(),
-                },
-                {
-                    start: daysSince(3),
-                    duration: '6d',
-                    name: 'Write new content',
-                    id: 'Task 1',
-                    progress: random(),
-                    important: true,
-                    dependencies: 'Task 0',
-                },
-                {
-                    start: daysSince(4),
-                    duration: '2d',
-                    name: 'Apply new styles',
-                    id: 'Task 2',
-                    progress: random(),
-                },
-                {
-                    start: daysSince(-4),
-                    end: daysSince(0),
-                    name: 'Review',
-                    id: 'Task 3',
-                    progress: random(),
-                },
-            ];
-
-            const tasksSpread = [
-                {
-                    start: daysSince(-30),
-                    end: daysSince(-10),
-                    name: 'Redesign website',
-                    id: 'Task 0',
-                    progress: random(),
-                },
-                {
-                    start: daysSince(-15),
-                    duration: '21d',
-                    name: 'Write new content',
-                    id: 'Task 1',
-                    progress: random(),
-                    important: true,
-                },
-                {
-                    start: daysSince(10),
-                    duration: '14d',
-                    name: 'Review',
-                    id: 'Task 3',
-                    progress: random(),
-                },
-                {
-                    start: daysSince(-3),
-                    duration: '4d',
-                    name: 'Publish',
-                    id: 'Task 4',
-                    progress: random(),
-                },
-            ];
-
-            const tasksDependencies = [
-                {
-                    start: daysSince(-2),
-                    end: daysSince(2),
-                    name: 'Redesign website',
-                    id: 'Task 0',
-                    progress: random(),
-                },
-                {
-                    start: daysSince(3),
-                    duration: '6d',
-                    name: 'Write new content',
-                    id: 'Task 1',
-                    progress: random(),
-                    dependencies: 'Task 0',
-                    important: true,
-                },
-                {
-                    start: daysSince(4),
-                    duration: '2d',
-                    name: 'Apply new styles',
-                    id: 'Task 2',
-                    progress: random(),
-                },
-                {
-                    start: daysSince(-4),
-                    end: daysSince(0),
-                    name: 'Review',
-                    id: 'Task 3',
-                    custom_class: 'readonly',
-                    progress: random(),
-                },
-            ];
-            let tasksMany = [
-                {
-                    start: daysSince(-7),
-                    end: daysSince(-5),
-                    name: 'Initial brainstorming',
-                    id: 'Task 0',
-                    progress: random(),
-                },
-                {
-                    start: daysSince(-3),
-                    end: daysSince(1),
-                    name: 'Develop wireframe',
-                    id: 'Task 1',
-                    progress: random(),
-                    dependencies: 'Task 0',
-                },
-                {
-                    start: daysSince(-1),
-                    duration: '4d',
-                    name: 'Client meeting',
-                    id: 'Task 2',
-                    progress: random(),
-                    important: true,
-                },
-                {
-                    start: daysSince(1),
-                    duration: '7d',
-                    name: 'Create prototype',
-                    id: 'Task 3',
-                    dependencies: 'Task 2',
-                    progress: random(),
-                },
-                {
-                    start: daysSince(3),
-                    duration: '5d',
-                    name: 'Test design with users',
-                    dependencies: 'Task 2',
-                    id: 'Task 4',
-                    progress: random(),
-                    important: true,
-                },
-                {
-                    start: daysSince(5),
-                    end: daysSince(10),
-                    name: 'Write technical documentation',
-                    id: 'Task 5',
-                    progress: random(),
-                },
-                {
-                    start: daysSince(8),
-                    duration: '3d',
-                    name: 'Prepare demo',
-                    id: 'Task 6',
-                    progress: random(),
-                },
-                {
-                    start: daysSince(10),
-                    end: daysSince(12),
-                    name: 'Final client review',
-                    id: 'Task 7',
-                    progress: random(),
-                    important: true,
-                },
-                {
-                    start: daysSince(14),
-                    duration: '6d',
-                    name: 'Implement feedback',
-                    id: 'Task 8',
-                    progress: random(),
-                },
-                {
-                    start: daysSince(16),
-                    duration: '4d',
-                    name: 'Launch website',
-                    id: 'Task 9',
-                    progress: random(),
-                    important: true,
-                },
-            ];
-
-            const HOLIDAYS = [
-                { name: 'Republic Day', date: '2024-01-26' },
-                { name: 'Maha Shivratri', date: '2024-02-23' },
-                { name: 'Holi', date: '2024-03-11' },
-                { name: 'Mahavir Jayanthi', date: '2024-04-07' },
-                { name: 'Good Friday', date: '2024-04-10' },
-                { name: 'May Day', date: '2024-05-01' },
-                { name: 'Buddha Purnima', date: '2024-05-08' },
-                { name: 'Krishna Janmastami', date: '2024-08-14' },
-                { name: 'Independence Day', date: '2024-08-15' },
-                { name: 'Ganesh Chaturthi', date: '2024-08-23' },
-                { name: 'Id-Ul-Fitr', date: '2024-09-21' },
-                { name: 'Vijaya Dashami', date: '2024-09-28' },
-                { name: 'Mahatma Gandhi Jayanti', date: '2024-10-02' },
-                { name: 'Diwali', date: '2024-10-17' },
-                { name: 'Guru Nanak Jayanthi', date: '2024-11-02' },
-                { name: 'Christmas', date: '2024-12-25' },
-            ];
-
-            const mutablity = new Gantt('#mutability', tasks, { ...ro });
-            const sideheader = new Gantt('#sideheader', tasksSpread, {
-                today_button: true,
-                view_mode_select: true,
-                holidays: null,
-                ...ro,
-            });
-
-            const holidays = new Gantt('#holidays', tasksSpread, {
-                holidays: {
-                    '#bfdbfe': [],
-                    '#a3e635': HOLIDAYS,
-                },
-                ...ro,
-            });
-
-            const ignore = new Gantt('#ignore', tasks, {
-                ignore: ['weekend', ...HOLIDAYS.map((k) => k.date)],
-                holidays: null,
-                scroll_to: daysSince(-10),
-                ...ro,
-            });
-
-            const styling = new Gantt('#styling', tasksMany, {
-                holidays: null,
-                scroll_to: daysSince(-10),
-                ...ro,
-            });
-
-            const advanced = new Gantt('#advanced', tasksSpread, {
-                holidays: null,
-                view_mode_select: true,
-                snap_at: '1d',
-                auto_move_label: false,
-                scroll_to: 'today',
-                ...ro,
-            });
-
-            const UPDATES = [
-                [
-                    mutablity,
-                    {
-                        'mutable-general': 'opp__readonly',
-                        'mutable-dates': 'opp__readonly_dates',
-                        'mutable-progress': 'opp__readonly_progress',
-                    },
-                    (id, val) => {
-                        if (id === 'mutable-general') {
-                            document.getElementById('mutable-dates').checked =
-                                !val;
-                            document.getElementById(
-                                'mutable-progress',
-                            ).checked = !val;
-                        }
-                    },
-                ],
-                [
-                    sideheader,
-                    {
-                        'toggle-today': 'today_button',
-                        'toggle-view-mode': 'view_mode_select',
-                    },
-                ],
-                [
-                    holidays,
-                    {
-                        'toggle-weekends': [
-                            'holidays',
-                            { '#a3e635': HOLIDAYS, '#bfdbfe': 'weekend' },
-                            { '#a3e635': HOLIDAYS, '#bfdbfe': [] },
-                        ],
-                        'custom-weekends': [
-                            'is_weekend',
-                            (d) => d.getDay() === 6 || d.getDay() === 5,
-                            (d) => d.getDay() === 0 || d.getDay() === 6,
-                        ]
-                    },
-                ],
-                [
-                    ignore,
-                    {
-                        'ignore-weekends': ['ignore', ['weekend'], []],
-                    },
-                ],
-                [
-                    styling,
-                    {
-                        'bar-radius': 'bar_corner_radius',
-                        'bar-height': 'bar_height',
-                        'arrow-curve': 'arrow_curve',
-                        'column-width': 'column_width',
-                        'grid-height': 'container_height',
-                        padding: 'padding',
-                    },
-                ],
-                [
-                    advanced,
-                    {
-                        'auto-move-label': 'auto_move_label',
-                        'snap-at-qty': (val) => ({
-                            snap_at:
-                                val +
-                                document.getElementById('snap-at-scale').value,
-                        }),
-                        'snap-at-scale': (val) => ({
-                            snap_at:
-                                document.getElementById('snap-at-qty').value +
-                                val,
-                        }),
-                    },
-                ],
-            ];
-
-            for (let [chart, details, after] of UPDATES) {
-                for (let id in details) {
-                    let el = document.getElementById(id);
-                    el.onchange = (e) => {
-                        let label = details[id];
-                        let val;
-
-                        if (e.currentTarget.type === 'checkbox') {
-                            if (typeof label === 'string') {
-                                let opposite = label.slice(0, 5) === 'opp__';
-                                if (opposite) label = label.slice(5);
-                                val = opposite
-                                    ? !e.currentTarget.checked
-                                    : e.currentTarget.checked;
-                            } else {
-                                val = label[e.currentTarget.checked ? 1 : 2];
-                                label = label[0];
-                            }
-                        } else {
-                            val = +e.currentTarget.value;
-                        }
-
-                        let store = chart.options.scroll_to;
-                        let scroll = chart.$container.scrollLeft;
-                        if (typeof label === 'function') {
-                            chart.update_options({
-                                ...label(val),
-                                scroll_to: null,
-                            });
-                        } else {
-                            chart.update_options({
-                                [label]: val,
-                                scroll_to: null,
-                            });
-                        }
-
-                        chart.options.scroll_to = store;
-                        chart.$container.scrollLeft = scroll;
-                        after && after(id, val, chart);
-                    };
-                }
-            }
-        </script>
+        <script src="dist/frappe-gantt.umd.js"></script>
         <script
             src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
             integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL"
             crossorigin="anonymous"
         ></script>
+
+        <script type="module">
+            import {
+                api,
+                requireSession,
+                renderNav,
+                NAV_CSS,
+                escapeHtml,
+                timeAgo,
+            } from './app.js';
+
+            const style = document.createElement('style');
+            style.textContent = NAV_CSS;
+            document.head.appendChild(style);
+
+            const user = await requireSession();
+            const isGuest = user.role === 'guest';
+            renderNav(user, 'board');
+
+            let users = await api('/users');
+            let tasks = [];
+            let gantt;
+            let currentId = null;
+
+            const fmt = (d) => {
+                const dt = d instanceof Date ? d : new Date(d);
+                return dt.toISOString().slice(0, 10);
+            };
+            const statusClass = (s) => 'bar-' + s.replace(/\s+/g, '');
+
+            function toGanttTask(t) {
+                return {
+                    id: t.id,
+                    name: t.name,
+                    start: t.start,
+                    end: t.end,
+                    progress: t.progress,
+                    dependencies: t.dependencies,
+                    custom_class: statusClass(t.status),
+                };
+            }
+
+            async function loadTasks() {
+                tasks = await api('/tasks');
+                renderGantt();
+            }
+
+            function renderGantt() {
+                const wrap = document.getElementById('gantt-wrap');
+                if (!tasks.length) {
+                    wrap.innerHTML =
+                        '<p class="text-muted text-center py-5 m-0">No tasks yet.' +
+                        (isGuest ? '' : ' Use “+ New task” to add one.') +
+                        '</p>';
+                    return;
+                }
+                // Fresh SVG each render so wrapper containers don't accumulate.
+                wrap.innerHTML = '<svg id="gantt"></svg>';
+                gantt = new Gantt('#gantt', tasks.map(toGanttTask), {
+                    view_mode: document.getElementById('view-mode').value,
+                    readonly: isGuest,
+                    popup_on: 'click',
+                    on_click: (t) => openPanel(t.id),
+                    on_date_change: async (t, start, end) => {
+                        await api('/tasks/' + t.id, {
+                            method: 'PATCH',
+                            body: { start: fmt(start), end: fmt(end) },
+                        });
+                        await refreshTask(t.id);
+                    },
+                    on_progress_change: async (t, progress) => {
+                        await api('/tasks/' + t.id, {
+                            method: 'PATCH',
+                            body: { progress: Math.round(progress) },
+                        });
+                        await refreshTask(t.id);
+                    },
+                });
+            }
+
+            async function refreshTask(id) {
+                const updated = await api('/tasks/' + id);
+                const i = tasks.findIndex((t) => t.id === id);
+                if (i >= 0) tasks[i] = updated;
+            }
+
+            // ---------- Task detail panel ----------
+            const panel = new bootstrap.Offcanvas('#task-panel');
+            const assigneeSel = document.getElementById('f-assignee');
+            assigneeSel.innerHTML =
+                '<option value="">Unassigned</option>' +
+                users
+                    .map((u) => `<option value="${u.id}">${escapeHtml(u.name)}</option>`)
+                    .join('');
+
+            function setReadonly() {
+                if (!isGuest) return;
+                document
+                    .querySelectorAll(
+                        '#task-panel input, #task-panel select, #task-panel textarea, #task-panel button:not(.btn-close)',
+                    )
+                    .forEach((el) => (el.disabled = true));
+                document.getElementById('comment-box').style.display = 'none';
+                document.getElementById('panel-actions').style.display = 'none';
+                document.getElementById('add-task-btn').style.display = 'none';
+            }
+
+            async function openPanel(id) {
+                currentId = id;
+                const t = await api('/tasks/' + id);
+                document.getElementById('panel-title').textContent = t.name;
+                document.getElementById('f-name').value = t.name;
+                document.getElementById('f-status').value = t.status;
+                document.getElementById('f-priority').value = t.priority;
+                document.getElementById('f-assignee').value = t.assignee_id || '';
+                document.getElementById('f-progress').value = t.progress;
+                document.getElementById('f-start').value = t.start;
+                document.getElementById('f-end').value = t.end;
+                document.getElementById('f-description').value = t.description;
+                await Promise.all([loadComments(id), loadHistory(id)]);
+                setReadonly();
+                panel.show();
+            }
+
+            async function loadComments(id) {
+                const comments = await api(`/tasks/${id}/comments`);
+                document.getElementById('comments').innerHTML = comments.length
+                    ? comments
+                          .map(
+                              (c) => `<div class="comment">
+                                <div class="meta">${escapeHtml(c.user_name)} · ${timeAgo(c.created_at)}</div>
+                                <div>${escapeHtml(c.body)}</div></div>`,
+                          )
+                          .join('')
+                    : '<p class="text-muted small">No comments yet.</p>';
+            }
+
+            async function loadHistory(id) {
+                const items = await api(`/tasks/${id}/history`);
+                document.getElementById('history').innerHTML = items.length
+                    ? items
+                          .map(
+                              (h) => `<div class="history-item">${escapeHtml(h.summary)}
+                                <div class="when">${timeAgo(h.created_at)}</div></div>`,
+                          )
+                          .join('')
+                    : '<p class="text-muted small">No history yet.</p>';
+            }
+
+            document.getElementById('save-task').onclick = async () => {
+                await api('/tasks/' + currentId, {
+                    method: 'PATCH',
+                    body: {
+                        name: document.getElementById('f-name').value,
+                        status: document.getElementById('f-status').value,
+                        priority: document.getElementById('f-priority').value,
+                        assignee_id:
+                            document.getElementById('f-assignee').value || null,
+                        progress: Number(document.getElementById('f-progress').value),
+                        start: document.getElementById('f-start').value,
+                        end: document.getElementById('f-end').value,
+                        description: document.getElementById('f-description').value,
+                    },
+                });
+                await loadTasks();
+                await loadHistory(currentId);
+            };
+
+            document.getElementById('delete-task').onclick = async () => {
+                if (!confirm('Delete this task?')) return;
+                await api('/tasks/' + currentId, { method: 'DELETE' });
+                panel.hide();
+                await loadTasks();
+            };
+
+            document.getElementById('comment-send').onclick = async () => {
+                const input = document.getElementById('comment-input');
+                if (!input.value.trim()) return;
+                await api(`/tasks/${currentId}/comments`, {
+                    method: 'POST',
+                    body: { body: input.value.trim() },
+                });
+                input.value = '';
+                await Promise.all([loadComments(currentId), loadHistory(currentId)]);
+            };
+
+            // ---------- Toolbar ----------
+            document.getElementById('view-mode').onchange = renderGantt;
+            document.getElementById('today-btn').onclick = () =>
+                gantt && gantt.scroll_current();
+            document.getElementById('add-task-btn').onclick = async () => {
+                const name = prompt('New task name:');
+                if (!name) return;
+                const today = new Date();
+                const end = new Date();
+                end.setDate(end.getDate() + 5);
+                await api('/tasks', {
+                    method: 'POST',
+                    body: { name, start: fmt(today), end: fmt(end) },
+                });
+                await loadTasks();
+            };
+
+            if (isGuest) {
+                document.getElementById('add-task-btn').style.display = 'none';
+            }
+
+            await loadTasks();
+        </script>
     </body>
 </html>

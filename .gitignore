@@ -32,3 +32,8 @@ node_modules
 
 gh-pages
 feedback*.md
+
+# Local backend database (runtime data)
+data/*.db
+data/*.db-wal
+data/*.db-shm
