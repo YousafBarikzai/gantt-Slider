@@ -3,6 +3,21 @@
     <head>
         <meta charset="UTF-8" />
         <title>Simple Gantt</title>
+        <!-- Auth guard: bounce to the login splash if not signed in. Runs first. -->
+        <script>
+            (function () {
+                try {
+                    var auth = JSON.parse(
+                        sessionStorage.getItem('gantt_auth') || 'null',
+                    );
+                    if (!auth || !auth.role) {
+                        window.location.replace('login.html');
+                    }
+                } catch (e) {
+                    window.location.replace('login.html');
+                }
+            })();
+        </script>
         <link rel="stylesheet" href="dist/frappe-gantt.css" />
         <link
             href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
@@ -30,10 +45,68 @@
             small {
                 font-size: 0.775em;
             }
+
+            .app-topbar {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 1rem;
+                padding: 0.6rem 1.5rem;
+                background: #0f172a;
+                color: #fff;
+            }
+            .app-topbar .brand {
+                font-weight: 600;
+            }
+            .app-topbar .user-meta {
+                display: flex;
+                align-items: center;
+                gap: 0.75rem;
+                font-size: 0.9rem;
+            }
+            .role-badge {
+                font-size: 0.7rem;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+                padding: 0.15rem 0.5rem;
+                border-radius: 999px;
+                background: #2563eb;
+            }
+            .role-badge.guest {
+                background: #64748b;
+            }
+            .readonly-banner {
+                background: #fef3c7;
+                color: #92400e;
+                text-align: center;
+                padding: 0.5rem 1rem;
+                font-size: 0.85rem;
+                border-bottom: 1px solid #fde68a;
+            }
         </style>
         <script src="dist/frappe-gantt.umd.js"></script>
     </head>
     <body>
+        <div class="app-topbar">
+            <span class="brand">Project Planner</span>
+            <div class="user-meta">
+                <span id="user-name"></span>
+                <span class="role-badge" id="role-badge"></span>
+                <button
+                    id="logout-btn"
+                    class="btn btn-sm btn-outline-light"
+                >
+                    Log out
+                </button>
+            </div>
+        </div>
+        <div
+            class="readonly-banner d-none"
+            id="readonly-banner"
+        >
+            👁️ You're viewing as a <strong>guest</strong> — all pages are
+            read-only. Sign in as a team member to make changes.
+        </div>
         <div class="container">
             <h1 class="text-center pt-3 pb-2 font-serif">Frappe Gantt</h1>
             <hr />
@@ -327,6 +400,38 @@
             </div>
         </div>
         <script type="module">
+            // ---- Session / role ----
+            const AUTH = JSON.parse(
+                sessionStorage.getItem('gantt_auth') || 'null',
+            );
+            const isGuest = !AUTH || AUTH.role === 'guest';
+            // Spread into every Gantt so guests cannot drag, resize or edit.
+            const ro = isGuest ? { readonly: true } : {};
+
+            document.getElementById('user-name').textContent = AUTH
+                ? AUTH.name
+                : 'Guest';
+            const badge = document.getElementById('role-badge');
+            badge.textContent = isGuest ? 'Guest' : 'Team';
+            if (isGuest) badge.classList.add('guest');
+            document.getElementById('logout-btn').onclick = () => {
+                sessionStorage.removeItem('gantt_auth');
+                window.location.replace('login.html');
+            };
+            if (isGuest) {
+                document
+                    .getElementById('readonly-banner')
+                    .classList.remove('d-none');
+                // Disable every interactive control on the page for guests.
+                document
+                    .querySelectorAll(
+                        '.container input, .container select, .container textarea, .container button',
+                    )
+                    .forEach((el) => {
+                        el.disabled = true;
+                    });
+            }
+
             const rawToday = new Date();
             const today =
                 Date.UTC(
@@ -542,11 +647,12 @@
                 { name: 'Christmas', date: '2024-12-25' },
             ];
 
-            const mutablity = new Gantt('#mutability', tasks);
+            const mutablity = new Gantt('#mutability', tasks, { ...ro });
             const sideheader = new Gantt('#sideheader', tasksSpread, {
                 today_button: true,
                 view_mode_select: true,
                 holidays: null,
+                ...ro,
             });
 
             const holidays = new Gantt('#holidays', tasksSpread, {
@@ -554,17 +660,20 @@
                     '#bfdbfe': [],
                     '#a3e635': HOLIDAYS,
                 },
+                ...ro,
             });
 
             const ignore = new Gantt('#ignore', tasks, {
                 ignore: ['weekend', ...HOLIDAYS.map((k) => k.date)],
                 holidays: null,
                 scroll_to: daysSince(-10),
+                ...ro,
             });
 
             const styling = new Gantt('#styling', tasksMany, {
                 holidays: null,
                 scroll_to: daysSince(-10),
+                ...ro,
             });
 
             const advanced = new Gantt('#advanced', tasksSpread, {
@@ -573,6 +682,7 @@
                 snap_at: '1d',
                 auto_move_label: false,
                 scroll_to: 'today',
+                ...ro,
             });
 
             const UPDATES = [

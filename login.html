@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Sign in · Frappe Gantt</title>
+        <link
+            href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+            rel="stylesheet"
+            integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN"
+            crossorigin="anonymous"
+        />
+        <style>
+            body {
+                min-height: 100vh;
+                margin: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
+                font-family:
+                    system-ui,
+                    -apple-system,
+                    'Segoe UI',
+                    Roboto,
+                    sans-serif;
+                padding: 2rem 1rem;
+            }
+            .splash {
+                width: 100%;
+                max-width: 460px;
+            }
+            .splash-card {
+                background: #fff;
+                border-radius: 16px;
+                box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+                overflow: hidden;
+            }
+            .splash-head {
+                text-align: center;
+                padding: 2rem 2rem 1rem;
+            }
+            .splash-head h1 {
+                font-weight: 700;
+                font-size: 1.6rem;
+                margin: 0.25rem 0 0.25rem;
+                color: #0f172a;
+            }
+            .splash-head p {
+                color: #64748b;
+                margin: 0;
+                font-size: 0.9rem;
+            }
+            .logo-dot {
+                width: 56px;
+                height: 56px;
+                border-radius: 14px;
+                margin: 0 auto;
+                background: linear-gradient(135deg, #2563eb, #1e3a8a);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: #fff;
+                font-size: 1.6rem;
+                font-weight: 700;
+            }
+            .splash-body {
+                padding: 1rem 2rem 2rem;
+            }
+            .divider {
+                display: flex;
+                align-items: center;
+                text-align: center;
+                color: #94a3b8;
+                font-size: 0.75rem;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                margin: 1.25rem 0;
+            }
+            .divider::before,
+            .divider::after {
+                content: '';
+                flex: 1;
+                border-bottom: 1px solid #e2e8f0;
+            }
+            .divider:not(:empty)::before {
+                margin-right: 0.75rem;
+            }
+            .divider:not(:empty)::after {
+                margin-left: 0.75rem;
+            }
+            .feedback {
+                font-size: 0.85rem;
+            }
+            .footer-note {
+                text-align: center;
+                color: rgba(255, 255, 255, 0.7);
+                font-size: 0.75rem;
+                margin-top: 1rem;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="splash">
+            <div class="splash-card">
+                <div class="splash-head">
+                    <div class="logo-dot">G</div>
+                    <h1>Project Planner</h1>
+                    <p>Sign in to access the project timeline</p>
+                </div>
+                <div class="splash-body">
+                    <!-- ===== Core team login ===== -->
+                    <form id="team-login">
+                        <div class="mb-3">
+                            <label for="team-user" class="form-label fw-semibold"
+                                >Core team member</label
+                            >
+                            <select
+                                class="form-select"
+                                id="team-user"
+                                required
+                            ></select>
+                        </div>
+                        <div class="mb-3">
+                            <label
+                                for="team-password"
+                                class="form-label fw-semibold"
+                                >Shared password</label
+                            >
+                            <input
+                                type="password"
+                                class="form-control"
+                                id="team-password"
+                                placeholder="Enter the team password"
+                                autocomplete="current-password"
+                                required
+                            />
+                        </div>
+                        <div
+                            class="alert alert-danger py-2 feedback d-none"
+                            id="login-error"
+                        ></div>
+                        <button
+                            type="submit"
+                            class="btn btn-primary w-100 fw-semibold"
+                        >
+                            Sign in
+                        </button>
+                    </form>
+
+                    <div class="divider">or</div>
+
+                    <!-- ===== Guest + request access ===== -->
+                    <button
+                        id="guest-login"
+                        class="btn btn-outline-secondary w-100 mb-2"
+                    >
+                        Continue as guest (read-only)
+                    </button>
+                    <button
+                        type="button"
+                        class="btn btn-link w-100 text-decoration-none"
+                        data-bs-toggle="modal"
+                        data-bs-target="#request-modal"
+                    >
+                        Don't have access? Request an account
+                    </button>
+                </div>
+            </div>
+            <p class="footer-note">
+                Guests can view every page but cannot make any changes.
+            </p>
+        </div>
+
+        <!-- ===== Request-account modal ===== -->
+        <div
+            class="modal fade"
+            id="request-modal"
+            tabindex="-1"
+            aria-hidden="true"
+        >
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Request an account</h5>
+                        <button
+                            type="button"
+                            class="btn-close"
+                            data-bs-dismiss="modal"
+                            aria-label="Close"
+                        ></button>
+                    </div>
+                    <form id="request-form">
+                        <div class="modal-body">
+                            <p class="text-muted small">
+                                Fill this in and we'll send your request to the
+                                administrator. You'll get an email confirming
+                                we've received it.
+                            </p>
+                            <div class="mb-3">
+                                <label for="req-name" class="form-label"
+                                    >Full name</label
+                                >
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    id="req-name"
+                                    required
+                                />
+                            </div>
+                            <div class="mb-3">
+                                <label for="req-email" class="form-label"
+                                    >Email address</label
+                                >
+                                <input
+                                    type="email"
+                                    class="form-control"
+                                    id="req-email"
+                                    required
+                                />
+                            </div>
+                            <div class="mb-3">
+                                <label for="req-department" class="form-label"
+                                    >Department</label
+                                >
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    id="req-department"
+                                    required
+                                />
+                            </div>
+                            <div class="mb-3">
+                                <label for="req-comment" class="form-label"
+                                    >Short comment</label
+                                >
+                                <textarea
+                                    class="form-control"
+                                    id="req-comment"
+                                    rows="3"
+                                    placeholder="Tell us briefly why you'd like access"
+                                ></textarea>
+                            </div>
+                            <div
+                                class="alert py-2 feedback d-none"
+                                id="request-feedback"
+                            ></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button
+                                type="button"
+                                class="btn btn-light"
+                                data-bs-dismiss="modal"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="submit"
+                                class="btn btn-primary"
+                                id="request-submit"
+                            >
+                                Send request
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <script
+            src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
+            integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL"
+            crossorigin="anonymous"
+        ></script>
+        <!-- EmailJS browser SDK (used to deliver account requests) -->
+        <script
+            src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"
+        ></script>
+
+        <script>
+            /* =====================================================================
+             *  EDIT ME — configuration
+             *  All the placeholder values below are meant to be changed by you.
+             * ===================================================================== */
+
+            // 1) Core team. Each name becomes a named login in the dropdown,
+            //    and they ALL share the single password below.
+            const TEAM_MEMBERS = [
+                'Yousaf', // 👈 you (admin)
+                'Team Member 2',
+                'Team Member 3',
+                'Team Member 4',
+            ];
+
+            // 2) The single shared password for every core-team login.
+            const SHARED_PASSWORD = 'changeme';
+
+            // 3) EmailJS settings — used to email account requests to you and to
+            //    send the applicant a "please bear with us" auto-reply.
+            //    Create a free account at https://www.emailjs.com, then paste your
+            //    Public Key, Service ID and two Template IDs below.
+            const EMAILJS = {
+                publicKey: 'YOUR_EMAILJS_PUBLIC_KEY',
+                serviceId: 'YOUR_EMAILJS_SERVICE_ID',
+                adminTemplateId: 'YOUR_ADMIN_TEMPLATE_ID', // notifies the admin (you)
+                autoReplyTemplateId: 'YOUR_AUTOREPLY_TEMPLATE_ID', // auto-reply to the applicant
+            };
+
+            // Where account requests are sent.
+            const ADMIN_EMAIL = 'barikzai@gmail.com';
+            const ADMIN_NAME = 'Yousaf';
+
+            /* ===================================================================== */
+
+            const AUTH_KEY = 'gantt_auth';
+
+            // ---- Core team login dropdown ----
+            const userSelect = document.getElementById('team-user');
+            for (const name of TEAM_MEMBERS) {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                userSelect.appendChild(opt);
+            }
+
+            function signIn(role, name) {
+                sessionStorage.setItem(
+                    AUTH_KEY,
+                    JSON.stringify({ role, name, at: Date.now() }),
+                );
+                window.location.href = 'index.html';
+            }
+
+            document.getElementById('team-login').addEventListener(
+                'submit',
+                (e) => {
+                    e.preventDefault();
+                    const error = document.getElementById('login-error');
+                    const name = userSelect.value;
+                    const pw = document.getElementById('team-password').value;
+                    if (pw === SHARED_PASSWORD) {
+                        signIn('member', name);
+                    } else {
+                        error.textContent =
+                            'Incorrect password. Please try again.';
+                        error.classList.remove('d-none');
+                    }
+                },
+            );
+
+            document
+                .getElementById('guest-login')
+                .addEventListener('click', () => signIn('guest', 'Guest'));
+
+            // ---- Request-account form (EmailJS) ----
+            const isConfigured = !Object.values(EMAILJS).some((v) =>
+                String(v).startsWith('YOUR_'),
+            );
+            if (isConfigured && window.emailjs) {
+                emailjs.init({ publicKey: EMAILJS.publicKey });
+            }
+
+            const requestForm = document.getElementById('request-form');
+            const requestFeedback =
+                document.getElementById('request-feedback');
+            const requestSubmit = document.getElementById('request-submit');
+
+            function showFeedback(message, type) {
+                requestFeedback.textContent = message;
+                requestFeedback.className =
+                    'alert py-2 feedback alert-' + type;
+            }
+
+            requestForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const data = {
+                    name: document.getElementById('req-name').value.trim(),
+                    email: document.getElementById('req-email').value.trim(),
+                    department: document
+                        .getElementById('req-department')
+                        .value.trim(),
+                    comment: document
+                        .getElementById('req-comment')
+                        .value.trim(),
+                };
+
+                // Always keep a local copy as a backup.
+                const pending = JSON.parse(
+                    localStorage.getItem('gantt_access_requests') || '[]',
+                );
+                pending.push({ ...data, at: new Date().toISOString() });
+                localStorage.setItem(
+                    'gantt_access_requests',
+                    JSON.stringify(pending),
+                );
+
+                if (!isConfigured || !window.emailjs) {
+                    showFeedback(
+                        'Your request has been recorded. (Email delivery is not configured yet — set your EmailJS keys in login.html to send it automatically.)',
+                        'warning',
+                    );
+                    requestForm.reset();
+                    return;
+                }
+
+                requestSubmit.disabled = true;
+                requestSubmit.textContent = 'Sending…';
+
+                // Fields available to both EmailJS templates.
+                const params = {
+                    to_admin_email: ADMIN_EMAIL,
+                    admin_name: ADMIN_NAME,
+                    applicant_name: data.name,
+                    applicant_email: data.email,
+                    department: data.department,
+                    comment: data.comment || '(no comment)',
+                    submitted_at: new Date().toLocaleString(),
+                };
+
+                try {
+                    // 1) Notify the admin (you) of the new request.
+                    await emailjs.send(
+                        EMAILJS.serviceId,
+                        EMAILJS.adminTemplateId,
+                        params,
+                    );
+                    // 2) Auto-reply to the applicant.
+                    await emailjs.send(
+                        EMAILJS.serviceId,
+                        EMAILJS.autoReplyTemplateId,
+                        params,
+                    );
+                    showFeedback(
+                        'Thanks! Your request has been sent. Please bear with us until ' +
+                            ADMIN_NAME +
+                            ' reviews it and grants you access — a confirmation email is on its way.',
+                        'success',
+                    );
+                    requestForm.reset();
+                } catch (err) {
+                    console.error('EmailJS error', err);
+                    showFeedback(
+                        'Sorry, we could not send your request right now. Please try again later — your details were saved.',
+                        'danger',
+                    );
+                } finally {
+                    requestSubmit.disabled = false;
+                    requestSubmit.textContent = 'Send request';
+                }
+            });
+        </script>
+    </body>
+</html>
