@@ -78,6 +78,17 @@ app.get('/api/me', (req, res) => {
 });
 
 // ============================== USERS ==============================
+// Public: just the names/roles needed to populate the login dropdown.
+app.get('/api/team', (_req, res) => {
+    res.json(
+        db
+            .prepare(
+                "SELECT name, role FROM users WHERE active = 1 ORDER BY (role = 'admin') DESC, name",
+            )
+            .all(),
+    );
+});
+
 app.get('/api/users', requireAuth, (_req, res) => {
     res.json(
         db
