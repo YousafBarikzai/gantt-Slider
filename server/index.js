@@ -99,6 +99,26 @@ app.get('/api/users', requireAuth, (_req, res) => {
     );
 });
 
+// Admin: rotate the shared team password.
+app.post('/api/team-password', requireAdmin, (req, res) => {
+    const { current_password, new_password } = req.body || {};
+    if (!new_password || new_password.length < 6)
+        return res
+            .status(400)
+            .json({ error: 'New password must be at least 6 characters' });
+    if (!verifyPassword(current_password || '', getConfig('shared_password')))
+        return res
+            .status(403)
+            .json({ error: 'Current password is incorrect' });
+    setConfig('shared_password', hashPassword(new_password));
+    log(req.user, {
+        entity_type: 'auth',
+        action: 'update',
+        summary: `${req.user.name} changed the team password`,
+    });
+    res.json({ ok: true });
+});
+
 // ============================== TASKS ==============================
 function serializeTask(row) {
     const assignee = row.assignee_id

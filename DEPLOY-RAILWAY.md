@@ -54,15 +54,12 @@ because it's on the `/data` volume.
 
 ## Rotating the shared password
 
-Because the password is only seeded on first boot, to change it later either:
+Sign in as **Yousaf** (admin) and click **"Team password"** in the board
+toolbar — enter the current password and the new one. That's it; everyone uses
+the new password on their next sign-in.
 
-- **Easiest:** delete the volume (wipes all data) and redeploy with a new
-  `TEAM_PASSWORD`, or
-- Update the scrypt hash in the `app_config` table (`key = 'shared_password'`)
-  in the database on the volume.
-
-(If you'd like, I can add a small admin "change team password" endpoint so this
-is a button instead of a manual step.)
+(`TEAM_PASSWORD` only sets the *initial* password on first boot; after that the
+button is the way to change it.)
 
 ## Troubleshooting
 

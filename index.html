@@ -69,6 +69,9 @@
             </select>
             <button id="today-btn" class="btn btn-sm btn-outline-secondary">Today</button>
             <button id="add-task-btn" class="btn btn-sm btn-primary">+ New task</button>
+            <button id="team-pw-btn" class="btn btn-sm btn-outline-secondary d-none">
+                Team password
+            </button>
         </div>
 
         <div id="gantt-wrap"><svg id="gantt"></svg></div>
@@ -146,6 +149,44 @@
                 <div class="panel-section">
                     <h6 class="fw-bold">History</h6>
                     <div id="history"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== Change team password (admins only) ===== -->
+        <div class="modal fade" id="pw-modal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Change team password</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <form id="pw-form">
+                        <div class="modal-body">
+                            <p class="text-muted small">
+                                This is the shared password every core-team member
+                                uses to sign in. Changing it signs no one out, but
+                                everyone will need the new password next time.
+                            </p>
+                            <div class="mb-3">
+                                <label class="form-label">Current password</label>
+                                <input type="password" id="pw-current" class="form-control" required />
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">New password</label>
+                                <input type="password" id="pw-new" class="form-control" minlength="6" required />
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Confirm new password</label>
+                                <input type="password" id="pw-confirm" class="form-control" required />
+                            </div>
+                            <div class="alert py-2 d-none" id="pw-feedback"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" class="btn btn-primary" id="pw-save">Update password</button>
+                        </div>
+                    </form>
                 </div>
             </div>
         </div>
@@ -369,6 +410,47 @@
 
             if (isGuest) {
                 document.getElementById('add-task-btn').style.display = 'none';
+            }
+
+            // ---------- Change team password (admins only) ----------
+            if (user.role === 'admin') {
+                const pwBtn = document.getElementById('team-pw-btn');
+                pwBtn.classList.remove('d-none');
+                const pwModal = new bootstrap.Modal('#pw-modal');
+                const pwFeedback = document.getElementById('pw-feedback');
+                pwBtn.onclick = () => {
+                    document.getElementById('pw-form').reset();
+                    pwFeedback.classList.add('d-none');
+                    pwModal.show();
+                };
+                document.getElementById('pw-form').onsubmit = async (e) => {
+                    e.preventDefault();
+                    const current = document.getElementById('pw-current').value;
+                    const next = document.getElementById('pw-new').value;
+                    const confirm = document.getElementById('pw-confirm').value;
+                    pwFeedback.className = 'alert py-2';
+                    if (next !== confirm) {
+                        pwFeedback.textContent = 'New passwords do not match.';
+                        pwFeedback.classList.add('alert-danger');
+                        return;
+                    }
+                    try {
+                        await api('/team-password', {
+                            method: 'POST',
+                            body: {
+                                current_password: current,
+                                new_password: next,
+                            },
+                        });
+                        pwFeedback.textContent =
+                            'Team password updated. Everyone uses the new one next sign-in.';
+                        pwFeedback.classList.add('alert-success');
+                        document.getElementById('pw-form').reset();
+                    } catch (err) {
+                        pwFeedback.textContent = err.message;
+                        pwFeedback.classList.add('alert-danger');
+                    }
+                };
             }
 
             await loadTasks();
