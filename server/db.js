@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     status       TEXT NOT NULL DEFAULT 'Backlog',  -- DevOps stage
     priority     TEXT NOT NULL DEFAULT 'Medium',
     assignee_id  INTEGER REFERENCES users(id),
+    work_stream  TEXT NOT NULL DEFAULT '',
+    sub_stage    TEXT NOT NULL DEFAULT '',
+    hours        INTEGER,
     start        TEXT NOT NULL,
     end          TEXT NOT NULL,
     progress     INTEGER NOT NULL DEFAULT 0,
@@ -89,6 +92,17 @@ CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_comments_task ON task_comments(task_id);
 `);
+
+// ---- Migrations (add columns to databases that predate them; data-safe) ----
+function ensureColumn(table, column, ddl) {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+    if (!cols.some((c) => c.name === column)) {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+    }
+}
+ensureColumn('tasks', 'work_stream', "work_stream TEXT NOT NULL DEFAULT ''");
+ensureColumn('tasks', 'sub_stage', "sub_stage TEXT NOT NULL DEFAULT ''");
+ensureColumn('tasks', 'hours', 'hours INTEGER');
 
 // ---- Password hashing (scrypt, no external deps) ----
 export function hashPassword(password) {
@@ -181,3 +195,31 @@ function seed() {
     );
 }
 seed();
+
+// ---- One-time demo backfill for the Detailed Plan ----
+// Gives the sample tasks a Work Stream / Sub-stage so the plan isn't empty, and
+// clears their owners (per request, owners start empty). Guarded by work_stream=''
+// so it only runs once and never overwrites real categorisation.
+{
+    const demoPlan = [
+        ['Task-1', 'Infrastructure', 'Environment Setup'],
+        ['Task-2', 'Infrastructure', 'Security & Access'],
+        ['Task-3', 'Product', 'Design'],
+        ['Task-4', 'Product', 'Documentation'],
+    ];
+    const apply = db.prepare(
+        "UPDATE tasks SET work_stream = ?, sub_stage = ?, assignee_id = NULL WHERE id = ? AND work_stream = ''",
+    );
+    for (const [id, ws, ss] of demoPlan) apply.run(ws, ss, id);
+}
+
+// ---- Emergency password reset ----
+// If RESET_TEAM_PASSWORD is set, force the shared password to it on every boot.
+// Use it to recover access if you're locked out, then REMOVE the variable
+// (otherwise it re-applies on each redeploy and overrides the in-app change).
+if (process.env.RESET_TEAM_PASSWORD) {
+    setConfig('shared_password', hashPassword(process.env.RESET_TEAM_PASSWORD));
+    console.log(
+        `[db] Shared team password was reset via RESET_TEAM_PASSWORD to: "${process.env.RESET_TEAM_PASSWORD}". Remove this variable now.`,
+    );
+}

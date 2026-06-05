@@ -68,6 +68,7 @@ export function renderNav(user, active) {
     const isGuest = user.role === 'guest';
     const links = [
         { href: 'index.html', label: 'Board', key: 'board' },
+        { href: 'plan.html', label: 'Detailed Plan', key: 'plan' },
         { href: 'log.html', label: 'Activity Log', key: 'log' },
     ];
     el.innerHTML = `
@@ -96,11 +97,12 @@ export function renderNav(user, active) {
 
 export const NAV_CSS = `
     .app-nav {
-        display: flex; align-items: center; gap: 1.5rem;
+        display: flex; align-items: center; gap: 1rem 1.5rem;
         padding: 0.6rem 1.5rem; background: #0f172a; color: #fff;
+        flex-wrap: wrap;
     }
     .app-nav .brand { font-weight: 700; }
-    .app-nav .nav-links { display: flex; gap: 1rem; flex: 1; }
+    .app-nav .nav-links { display: flex; gap: 1rem; flex: 1; flex-wrap: wrap; }
     .app-nav .nav-links a {
         color: #cbd5e1; text-decoration: none; font-size: 0.9rem;
         padding: 0.25rem 0.5rem; border-radius: 6px;

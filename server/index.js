@@ -132,6 +132,9 @@ function serializeTask(row) {
         priority: row.priority,
         assignee_id: row.assignee_id,
         assignee_name: assignee ? assignee.name : null,
+        work_stream: row.work_stream,
+        sub_stage: row.sub_stage,
+        hours: row.hours,
         start: row.start,
         end: row.end,
         progress: row.progress,
@@ -163,8 +166,10 @@ app.post('/api/tasks', requireMember, (req, res) => {
         db.prepare('SELECT MAX(sort_order) AS m FROM tasks').get().m ?? -1;
     db.prepare(`
         INSERT INTO tasks (id, name, description, status, priority, assignee_id,
+                           work_stream, sub_stage, hours,
                            start, end, progress, dependencies, custom_class, sort_order)
         VALUES (@id, @name, @description, @status, @priority, @assignee_id,
+                @work_stream, @sub_stage, @hours,
                 @start, @end, @progress, @dependencies, @custom_class, @sort_order)
     `).run({
         id,
@@ -173,6 +178,9 @@ app.post('/api/tasks', requireMember, (req, res) => {
         status: b.status || 'Backlog',
         priority: b.priority || 'Medium',
         assignee_id: b.assignee_id || null,
+        work_stream: b.work_stream || '',
+        sub_stage: b.sub_stage || '',
+        hours: b.hours ?? null,
         start: b.start,
         end: b.end,
         progress: b.progress || 0,
@@ -205,6 +213,9 @@ app.patch('/api/tasks/:id', requireMember, (req, res) => {
         'status',
         'priority',
         'assignee_id',
+        'work_stream',
+        'sub_stage',
+        'hours',
         'start',
         'end',
         'progress',
