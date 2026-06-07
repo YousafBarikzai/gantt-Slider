@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Portfolio Status Dashboard</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+            rel="stylesheet"
+        />
+        <link rel="stylesheet" href="styles.css" />
+    </head>
+    <body>
+        <header class="topbar">
+            <div class="topbar-inner">
+                <div class="brand">
+                    <span class="brand-dot"></span>
+                    <div>
+                        <h1>Portfolio Status</h1>
+                        <p class="brand-sub">Live RAG board across all projects</p>
+                    </div>
+                </div>
+                <div class="topbar-meta">
+                    <span id="source-pill" class="source-pill" title="Where status data is read from"></span>
+                    <span id="updated" class="updated"></span>
+                    <button id="refresh-btn" class="btn">Refresh</button>
+                </div>
+            </div>
+        </header>
+
+        <main class="container">
+            <section id="summary" class="summary" aria-label="Portfolio summary"></section>
+
+            <section
+                id="board"
+                class="board"
+                aria-label="Project status cards"
+            ></section>
+
+            <p id="empty" class="empty" hidden>No projects found.</p>
+            <p id="error" class="error" hidden></p>
+        </main>
+
+        <div id="detail" class="drawer" hidden>
+            <div class="drawer-backdrop" data-close></div>
+            <aside class="drawer-panel" role="dialog" aria-modal="true">
+                <button class="drawer-close" data-close aria-label="Close">&times;</button>
+                <div id="detail-body"></div>
+            </aside>
+        </div>
+
+        <script src="app.js"></script>
+    </body>
+</html>

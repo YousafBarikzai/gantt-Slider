@@ -1,0 +1,53 @@
+{
+    "name": "PMO Website",
+    "code": "PMO",
+    "owner": "Yousaf Barikzai",
+    "manager": "Yousaf Barikzai",
+    "stage": "Delivery",
+    "reportDate": "2026-06-05",
+    "targetDate": "2026-07-31",
+    "percentComplete": 62,
+    "rag": {
+        "overall": "amber",
+        "schedule": "amber",
+        "scope": "green",
+        "budget": "green",
+        "resource": "amber"
+    },
+    "summary": "Central PMO portal to surface project status, governance artefacts and reporting in one place. Core pages and the status board are live in staging; content migration and stakeholder sign-off are the remaining critical path items.",
+    "progress": [
+        "Information architecture and page templates approved.",
+        "Status board component built and wired to the projects data source.",
+        "Governance artefact library (PID, RAID, RACI templates) published to staging.",
+        "Accessibility pass completed on the core navigation."
+    ],
+    "upcoming": [
+        "Migrate remaining legacy content from SharePoint.",
+        "Stakeholder UAT and sign-off with the leadership team.",
+        "Production cutover and DNS switch."
+    ],
+    "milestones": [
+        { "name": "Staging environment live", "date": "2026-05-22", "status": "green" },
+        { "name": "Content migration complete", "date": "2026-06-27", "status": "amber" },
+        { "name": "UAT sign-off", "date": "2026-07-11", "status": "amber" },
+        { "name": "Go live", "date": "2026-07-31", "status": "grey" }
+    ],
+    "risks": [
+        {
+            "risk": "Content owners slow to provide finalised copy.",
+            "impact": "Delays migration and UAT start.",
+            "mitigation": "Weekly content tracker and named owners per page."
+        },
+        {
+            "risk": "Single developer dependency for the build.",
+            "impact": "Key-person risk on the delivery timeline.",
+            "mitigation": "Document build steps and pair a second engineer for handover."
+        }
+    ],
+    "budget": {
+        "currency": "GBP",
+        "original": 45000,
+        "spendToDate": 26500,
+        "forecast": 44000
+    }
+}

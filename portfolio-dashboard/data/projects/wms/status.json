@@ -1,0 +1,57 @@
+{
+    "name": "WMS",
+    "code": "WMS",
+    "owner": "Yousaf Barikzai",
+    "manager": "Yousaf Barikzai",
+    "stage": "Delivery",
+    "reportDate": "2026-06-05",
+    "targetDate": "2026-09-30",
+    "percentComplete": 38,
+    "rag": {
+        "overall": "red",
+        "schedule": "red",
+        "scope": "amber",
+        "budget": "amber",
+        "resource": "red"
+    },
+    "summary": "Warehouse Management System implementation covering inbound, putaway, picking and despatch. Integration testing has uncovered data-mapping issues with the ERP, and a vendor resource gap is now putting the September go-live at risk.",
+    "progress": [
+        "Inbound and putaway processes configured in the test environment.",
+        "Barcode/label printing (EAN-13) validated end to end.",
+        "First round of integration testing with the ERP completed."
+    ],
+    "upcoming": [
+        "Resolve transfer-order and stock-sync mapping defects.",
+        "Re-plan the integration test cycle with the vendor.",
+        "Confirm replacement for the departing integration lead."
+    ],
+    "milestones": [
+        { "name": "Test environment configured", "date": "2026-05-15", "status": "green" },
+        { "name": "Integration testing complete", "date": "2026-07-10", "status": "red" },
+        { "name": "UAT", "date": "2026-08-22", "status": "amber" },
+        { "name": "Go live", "date": "2026-09-30", "status": "red" }
+    ],
+    "risks": [
+        {
+            "risk": "ERP <-> WMS stock sync mapping defects.",
+            "impact": "Inaccurate inventory; blocks UAT.",
+            "mitigation": "Joint defect triage with the ERP team; daily stand-up until cleared."
+        },
+        {
+            "risk": "Vendor integration lead leaving mid-project.",
+            "impact": "Loss of context; slips the test cycle.",
+            "mitigation": "Escalated to vendor account manager; knowledge transfer sessions booked."
+        },
+        {
+            "risk": "Go-live window collides with peak trading freeze.",
+            "impact": "Forced delay to Q4 if September is missed.",
+            "mitigation": "Hold a contingency slot and agree freeze exceptions early."
+        }
+    ],
+    "budget": {
+        "currency": "GBP",
+        "original": 280000,
+        "spendToDate": 119000,
+        "forecast": 305000
+    }
+}

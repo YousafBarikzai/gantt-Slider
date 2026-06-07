@@ -1,0 +1,51 @@
+{
+    "name": "Social Media Content",
+    "code": "SMC",
+    "owner": "Yousaf Barikzai",
+    "manager": "Yousaf Barikzai",
+    "stage": "Planning & Delivery",
+    "reportDate": "2026-06-05",
+    "targetDate": "2026-08-15",
+    "percentComplete": 45,
+    "rag": {
+        "overall": "amber",
+        "schedule": "green",
+        "scope": "amber",
+        "budget": "green",
+        "resource": "amber"
+    },
+    "summary": "Quarterly social media content programme across LinkedIn and X to build the PMO brand and share project insights. The content calendar is running; scope is expanding faster than the current freelance capacity can sustain.",
+    "progress": [
+        "Q3 content calendar agreed and scheduled.",
+        "Brand templates and tone-of-voice guide signed off.",
+        "First four posts published; engagement tracking in place."
+    ],
+    "upcoming": [
+        "Confirm additional freelance designer capacity.",
+        "Produce the case-study series for delivered projects.",
+        "Set up monthly analytics review against engagement targets."
+    ],
+    "milestones": [
+        { "name": "Content calendar agreed", "date": "2026-05-20", "status": "green" },
+        { "name": "Case-study series live", "date": "2026-07-15", "status": "amber" },
+        { "name": "Q3 programme complete", "date": "2026-08-15", "status": "grey" }
+    ],
+    "risks": [
+        {
+            "risk": "Scope creep from ad-hoc post requests.",
+            "impact": "Dilutes the planned calendar and stretches capacity.",
+            "mitigation": "Intake form and a fortnightly prioritisation review."
+        },
+        {
+            "risk": "Single freelance designer dependency.",
+            "impact": "Production stalls if they are unavailable.",
+            "mitigation": "Onboard a backup designer from the approved supplier list."
+        }
+    ],
+    "budget": {
+        "currency": "GBP",
+        "original": 20000,
+        "spendToDate": 7800,
+        "forecast": 20000
+    }
+}

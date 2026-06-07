@@ -1,0 +1,47 @@
+{
+    "name": "Deployment Checks",
+    "code": "DEPLOY",
+    "owner": "Yousaf Barikzai",
+    "manager": "Yousaf Barikzai",
+    "stage": "Delivery",
+    "reportDate": "2026-06-05",
+    "targetDate": "2026-06-20",
+    "percentComplete": 85,
+    "rag": {
+        "overall": "green",
+        "schedule": "green",
+        "scope": "green",
+        "budget": "green",
+        "resource": "green"
+    },
+    "summary": "Automated pre- and post-deployment checklist and runbook to make releases repeatable and auditable. The pipeline checks are live; remaining work is rollback drills and team rollout.",
+    "progress": [
+        "Pre-deployment checklist automated in CI.",
+        "Post-deployment smoke tests run on every release.",
+        "Runbook published with sign-off gates per environment.",
+        "Slack notifications wired for pass/fail status."
+    ],
+    "upcoming": [
+        "Run a full rollback drill in staging.",
+        "Roll the process out to the wider engineering team.",
+        "Add release metrics dashboard (lead time, change-fail rate)."
+    ],
+    "milestones": [
+        { "name": "CI checks live", "date": "2026-05-12", "status": "green" },
+        { "name": "Rollback drill", "date": "2026-06-13", "status": "green" },
+        { "name": "Team rollout complete", "date": "2026-06-20", "status": "green" }
+    ],
+    "risks": [
+        {
+            "risk": "Teams bypass the checklist under release pressure.",
+            "impact": "Reintroduces manual error into deployments.",
+            "mitigation": "Make checks a required pipeline gate, not optional."
+        }
+    ],
+    "budget": {
+        "currency": "GBP",
+        "original": 15000,
+        "spendToDate": 11200,
+        "forecast": 14000
+    }
+}
