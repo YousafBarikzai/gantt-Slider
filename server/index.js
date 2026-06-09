@@ -20,6 +20,11 @@ import {
     normalizeStatus,
     normalizeLevel,
 } from './records.js';
+import {
+    canCreateType,
+    effectiveMatrix,
+    setMemberOverrides,
+} from './permissions.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -480,6 +485,11 @@ const OPEN_ISH = ['Closed', 'Resolved', 'Done', 'Rejected', 'Cleared', 'Achieved
 function createRecord(user, body, via) {
     const type = body.type;
     if (!CATALOGUE[type]) throw httpError(400, `Unknown record type: ${type}`);
+    if (!canCreateType(user, type))
+        throw httpError(403, `You don't have permission to create ${CATALOGUE[type].label.toLowerCase()} records`, {
+            permission: true,
+            type,
+        });
 
     const f = { ...(body.fields || {}) };
     // Normalise level-ish + status fields server-side regardless of source.
@@ -648,18 +658,35 @@ app.delete('/api/records/:id', requireMember, (req, res) => {
 
 // ============================== ASSISTANT ==============================
 // Static catalogue + context the voice assistant needs on the client.
-app.get('/api/assistant/catalogue', requireAuth, (_req, res) => {
+app.get('/api/assistant/catalogue', requireAuth, (req, res) => {
     res.json({
         ai_enabled: aiEnabled(),
+        role: req.user.role,
         types: TYPES.map((t) => ({
             type: t,
             label: CATALOGUE[t].label,
             home: CATALOGUE[t].home,
             required: CATALOGUE[t].required,
             statuses: CATALOGUE[t].statuses,
+            can_create: canCreateType(req.user, t),
         })),
         field_labels: FIELD_LABELS,
     });
+});
+
+// Admin: view / edit which record types the member role may create.
+app.get('/api/permissions', requireAdmin, (_req, res) => {
+    res.json(effectiveMatrix());
+});
+
+app.put('/api/permissions', requireAdmin, (req, res) => {
+    setMemberOverrides((req.body && req.body.member) || {});
+    log(req.user, {
+        entity_type: 'auth',
+        action: 'update',
+        summary: `${req.user.name} updated record-creation permissions`,
+    });
+    res.json(effectiveMatrix());
 });
 
 // Understand an utterance. Read-only (writes nothing) — even guests may draft.

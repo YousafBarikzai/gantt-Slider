@@ -269,9 +269,18 @@ export function mountAssistant(user) {
             await sayThenListen(data.clarifying_question || 'Could you tell me a bit more?');
             return;
         }
-        // Ready — show the editable card and ask to save.
+        // Ready — show the editable card.
         convo.pendingField = '';
         renderCard();
+        const label = (typesByKey[convo.type]?.label || convo.type).toLowerCase();
+        if (!canCreate(convo.type)) {
+            // Drafted, but this user can't create this type — don't offer to save.
+            awaitingConfirm = false;
+            await say(
+                `I've drafted this ${label}, but you don't have permission to create ${label} records here. I've left it ready for someone with access.`,
+            );
+            return;
+        }
         awaitingConfirm = true;
         setState('confirming');
         const prompt = `Here's what I'll save: ${data.summary}. Shall I save it?`;
@@ -299,8 +308,11 @@ export function mountAssistant(user) {
             return;
         }
         if (status === 403) {
+            const label = (typesByKey[convo.type]?.label || convo.type).toLowerCase();
             await say(
-                "You have read-only access, so I can't save this. I've drafted it — someone with write access can add it.",
+                data && data.permission
+                    ? `You don't have permission to create ${label} records, so I can't save this. I've drafted it for someone with access.`
+                    : "You have read-only access, so I can't save this. I've drafted it — someone with write access can add it.",
             );
             return;
         }
@@ -327,6 +339,11 @@ export function mountAssistant(user) {
         await say(`Sorry, I couldn't save that${data && data.error ? ': ' + data.error : '.'}`);
     }
 
+    function canCreate(type) {
+        const t = typesByKey[type];
+        return t ? t.can_create !== false : false;
+    }
+
     function questionFor(field) {
         return {
             title: 'What should the title be?',
@@ -348,6 +365,7 @@ export function mountAssistant(user) {
         const cat = typesByKey[t];
         const required = new Set(cat ? cat.required : []);
         const d = convo.draft;
+        const allowed = !isGuest && canCreate(t);
 
         const typeOpts = (catalogue?.types || [])
             .map((x) => `<option value="${x.type}" ${x.type === t ? 'selected' : ''}>${esc(x.label)}</option>`)
@@ -374,10 +392,18 @@ export function mountAssistant(user) {
             ${rows}
             ${hint}
             <div class="ai-card-actions">
-                <button id="ai-save" class="ai-btn-primary"${isGuest ? ' disabled title="Read-only access"' : ''}>Save</button>
+                <button id="ai-save" class="ai-btn-primary"${allowed ? '' : ' disabled'}>Save</button>
                 <button id="ai-discard" class="ai-btn-ghost">Discard</button>
             </div>
-            ${isGuest ? '<div class="ai-hint">You have read-only access — drafting only.</div>' : ''}
+            ${
+                allowed
+                    ? ''
+                    : `<div class="ai-hint">${
+                          isGuest
+                              ? 'You have read-only access — drafting only.'
+                              : `You don't have permission to create ${esc((cat?.label || t).toLowerCase())} records — drafting only.`
+                      }</div>`
+            }
         `;
         cardEl.hidden = false;
         logEl.scrollTop = logEl.scrollHeight;

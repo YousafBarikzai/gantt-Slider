@@ -82,9 +82,13 @@ shows an editable confirmation card, and — only after you confirm — saves it
 
 | Role     | Can do                                                              |
 | -------- | ------------------------------------------------------------------ |
-| `admin`  | Everything, plus view/approve account requests.                    |
-| `member` | Create/edit/delete tasks, comment.                                 |
+| `admin`  | Everything, plus view/approve account requests and edit permissions. |
+| `member` | Create/edit/delete tasks, comment. Can create every record type by default — an admin can switch specific types off for members. |
 | `guest`  | Read-only across every page. All write APIs return `403`.          |
+
+Per-type create permissions live in `server/permissions.js`. Admins toggle them on
+the RAID page ("Permissions" button); both the API and the voice assistant enforce
+them (a member blocked from decisions gets a `403` and the assistant drafts only).
 
 ## API overview
 
@@ -117,9 +121,12 @@ GET    /records/:id
 PATCH  /records/:id            (member+)   -> e.g. change status
 DELETE /records/:id            (member+)
 
-GET    /assistant/catalogue    record types + required fields + statuses
+GET    /assistant/catalogue    record types + required fields + statuses + can_create
 POST   /assistant/interpret    classify/extract an utterance (read-only)
 POST   /assistant/commit       (member+)   -> save a confirmed record
+
+GET    /permissions            (admin)     -> role × type create matrix
+PUT    /permissions            (admin)     -> set which types members may create
 
 POST   /access-requests        (public — from the splash form)
 GET    /access-requests        (admin)

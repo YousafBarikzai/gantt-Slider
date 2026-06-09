@@ -45,7 +45,19 @@
                     <option value="">All entities</option>
                 </select>
                 <button id="refresh" class="btn btn-sm btn-outline-secondary">Refresh</button>
+                <button id="perm-btn" class="btn btn-sm btn-outline-secondary d-none">Permissions</button>
                 <button id="new-record" class="btn btn-sm btn-primary ms-auto">＋ New (ask the assistant)</button>
+            </div>
+
+            <div id="perm-panel" class="d-none" style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:1rem;margin-bottom:1rem;max-width:560px;">
+                <div class="fw-bold mb-1">Who can create what</div>
+                <p class="text-muted small mb-2">
+                    Admins can create everything; guests are read-only. Untick a type to stop
+                    <strong>members</strong> creating it — the assistant and the API both enforce this.
+                </p>
+                <div id="perm-grid" class="d-flex flex-wrap gap-2 mb-2"></div>
+                <button id="perm-save" class="btn btn-sm btn-primary">Save permissions</button>
+                <span id="perm-msg" class="small text-success ms-2"></span>
             </div>
             <table class="table table-sm table-hover align-middle">
                 <thead>
@@ -172,6 +184,39 @@
                 const fab = document.getElementById('ai-fab');
                 if (fab) fab.click();
             };
+
+            // ---- Admin: per-type member permissions ----
+            if (user.role === 'admin') {
+                const permBtn = document.getElementById('perm-btn');
+                const permPanel = document.getElementById('perm-panel');
+                const permGrid = document.getElementById('perm-grid');
+                permBtn.classList.remove('d-none');
+                permBtn.onclick = async () => {
+                    if (!permPanel.classList.contains('d-none')) {
+                        permPanel.classList.add('d-none');
+                        return;
+                    }
+                    const m = await api('/permissions');
+                    permGrid.innerHTML = m.types
+                        .map(
+                            (t) => `<label class="form-check form-check-inline">
+                                <input class="form-check-input perm-cb" type="checkbox" data-type="${t.type}" ${m.matrix.member[t.type] ? 'checked' : ''}>
+                                <span class="form-check-label small">${escapeHtml(t.label)}</span>
+                            </label>`,
+                        )
+                        .join('');
+                    document.getElementById('perm-msg').textContent = '';
+                    permPanel.classList.remove('d-none');
+                };
+                document.getElementById('perm-save').onclick = async () => {
+                    const member = {};
+                    permGrid.querySelectorAll('.perm-cb').forEach((cb) => {
+                        member[cb.dataset.type] = cb.checked;
+                    });
+                    await api('/permissions', { method: 'PUT', body: { member } });
+                    document.getElementById('perm-msg').textContent = 'Saved.';
+                };
+            }
             // Refresh when the assistant saves something.
             document.addEventListener('records-updated', load);
 
