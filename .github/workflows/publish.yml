@@ -1,7 +1,9 @@
 name: Publish on NPM
+# This repo is a private Project Planner deployment, not the upstream npm
+# library — don't auto-publish on every merge to master. Run manually from the
+# Actions tab if a release is ever actually wanted.
 on:
-    push:
-        branches: [master]
+    workflow_dispatch:
 
 permissions:
   id-token: write # Required for OIDC
