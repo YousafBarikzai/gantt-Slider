@@ -62,11 +62,21 @@ export const CATALOGUE = {
     },
     milestone: {
         label: 'Milestone',
-        home: 'Timeline',
+        home: 'Timeline / Gantt',
         prefix: 'MS',
         required: ['title', 'date'],
         statuses: ['Planned', 'In Progress', 'Achieved', 'Missed'],
         default_status: 'Planned',
+        backed: 'tasks',
+    },
+    task: {
+        label: 'Task',
+        home: 'Detailed Plan',
+        prefix: 'TASK',
+        required: ['title'],
+        statuses: ['Backlog', 'To Do', 'In Progress', 'Review', 'Done'],
+        default_status: 'Backlog',
+        backed: 'tasks',
     },
     assumption: {
         label: 'Assumption',
@@ -95,6 +105,11 @@ export const CATALOGUE = {
 };
 
 export const TYPES = Object.keys(CATALOGUE);
+
+// Where a type is stored: 'tasks' (shows on the Board/Gantt/Plan) or 'records'.
+export function backingOf(type) {
+    return CATALOGUE[type]?.backed || 'records';
+}
 
 // Columns promoted to their own table column; everything else lives in `fields` JSON.
 export const PROMOTED = [

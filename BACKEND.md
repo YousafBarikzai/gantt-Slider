@@ -75,6 +75,11 @@ shows an editable confirmation card, and — only after you confirm — saves it
 - **Saving** goes through the same permissions as the UI: `POST /api/assistant/commit`
   uses `requireMember`, so guests can draft but not save. Every assistant record is
   stamped `created_via='assistant'` and written to the audit log.
+- **Task-backed types** (`task`, `milestone`) are written to the `tasks` table so
+  they appear on the Board, Gantt timeline and Detailed Plan; every other type goes
+  to `records`. The `tasks` table gained a `created_via` column for provenance.
+- The **conversation transcript** is sent with the record on save and stored on the
+  create audit entry (`field='transcript'`), so each AI record has a full trail.
 - Record types and their required fields live in `server/records.js`; the AI layer
   is `server/ai.js`; the front-end widget is `assistant.js` (mounted from `app.js`).
 

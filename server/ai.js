@@ -134,6 +134,7 @@ const KEYWORDS = [
     ['defect', /\bdefect\b|\bbug\b/],
     ['change_request', /change request|scope change|re-?scope|change to scope/],
     ['milestone', /\bmilestone\b|go[- ]?live|launch date|deadline for/],
+    ['task', /\btask\b|new task|work item|piece of work|build out|implement /],
     ['assumption', /\bassum/],
     ['blocker', /\bblocker\b|\bblocked\b/],
     ['meeting_note', /meeting|follow[- ]?up|minutes|note that/],

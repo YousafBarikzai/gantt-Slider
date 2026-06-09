@@ -19,6 +19,7 @@ import {
     missingRequired,
     normalizeStatus,
     normalizeLevel,
+    backingOf,
 } from './records.js';
 import {
     canCreateType,
@@ -155,6 +156,7 @@ function serializeTask(row) {
         dependencies: row.dependencies,
         custom_class: row.custom_class,
         sort_order: row.sort_order,
+        created_via: row.created_via,
         created_at: row.created_at,
         updated_at: row.updated_at,
     };
@@ -502,6 +504,10 @@ function createRecord(user, body, via) {
     if (missing.length)
         throw httpError(400, 'Missing required fields', { missing });
 
+    // Task-backed types (task, milestone) live in the tasks table so they show
+    // on the Board, Gantt timeline and Detailed Plan.
+    if (backingOf(type) === 'tasks') return createTaskBacked(user, type, f, body, via);
+
     const entity_id = resolveEntity(f.entity);
     const { owner_id, owner_name } = resolveOwner(f.owner);
 
@@ -549,16 +555,108 @@ function createRecord(user, body, via) {
         db.prepare('SELECT * FROM records WHERE id = ?').get(id),
     );
     const viaNote = via === 'assistant' ? ' via the AI assistant' : '';
+    const transcript = via === 'assistant' && body.transcript ? String(body.transcript).slice(0, 4000) : null;
     log(user, {
         entity_type: type,
         entity_id: id,
         entity_name: record.title,
         action: 'create',
+        field: transcript ? 'transcript' : null,
+        new_value: transcript,
         summary: `${user.name} created ${CATALOGUE[type].label.toLowerCase()} "${record.title}"${viaNote}`,
     });
 
     const where = record.entity_name ? ` under ${record.entity_name}` : '';
-    return { record, location: `${id} in the ${CATALOGUE[type].home}${where}` };
+    return {
+        record,
+        location: `${id} in the ${CATALOGUE[type].home}${where}`,
+        link: 'raid.html',
+    };
+}
+
+// Create a task-backed record (task / milestone) in the tasks table.
+function createTaskBacked(user, type, f, body, via) {
+    const cat = CATALOGUE[type];
+    const name = f.title;
+    const iso = (d) => d.toISOString().slice(0, 10);
+    const today = new Date();
+    const plus = (n) => {
+        const d = new Date(today);
+        d.setDate(d.getDate() + n);
+        return iso(d);
+    };
+
+    let start, end;
+    if (type === 'milestone') {
+        const date = f.date || f.due_date || iso(today);
+        start = date;
+        end = date;
+    } else {
+        start = f.start || iso(today);
+        end = f.due_date || f.date || plus(7);
+        if (new Date(end) < new Date(start)) end = start;
+    }
+
+    if (!body.force) {
+        const norm = (s) => String(s || '').trim().toLowerCase();
+        const dup = db
+            .prepare('SELECT id, name, status FROM tasks')
+            .all()
+            .find((t) => norm(t.name) === norm(name) && t.status !== 'Done');
+        if (dup)
+            throw httpError(409, 'A similar open task already exists', {
+                duplicate: { id: dup.id, title: dup.name },
+            });
+    }
+
+    const { owner_id } = resolveOwner(f.owner);
+    const status = normalizeStatus(type, f.status);
+    const id = `Task-${Date.now()}`;
+    const maxOrder = db.prepare('SELECT MAX(sort_order) AS m FROM tasks').get().m ?? -1;
+    db.prepare(`
+        INSERT INTO tasks (id, name, description, status, priority, assignee_id,
+                           work_stream, sub_stage, hours, start, end, progress,
+                           dependencies, custom_class, sort_order, created_via)
+        VALUES (@id, @name, @description, @status, @priority, @assignee_id,
+                @work_stream, @sub_stage, @hours, @start, @end, @progress,
+                @dependencies, @custom_class, @sort_order, @created_via)
+    `).run({
+        id,
+        name,
+        description: f.description || '',
+        status,
+        priority: f.priority || 'Medium',
+        assignee_id: owner_id,
+        work_stream: f.work_stream || '',
+        sub_stage: f.source || '',
+        hours: null,
+        start,
+        end,
+        progress: 0,
+        dependencies: '',
+        custom_class: type === 'milestone' ? 'milestone' : '',
+        sort_order: maxOrder + 1,
+        created_via: via,
+    });
+
+    const record = serializeTask(db.prepare('SELECT * FROM tasks WHERE id = ?').get(id));
+    const viaNote = via === 'assistant' ? ' via the AI assistant' : '';
+    const transcript = via === 'assistant' && body.transcript ? String(body.transcript).slice(0, 4000) : null;
+    log(user, {
+        entity_type: 'task',
+        entity_id: id,
+        entity_name: name,
+        action: 'create',
+        field: transcript ? 'transcript' : null,
+        new_value: transcript,
+        summary: `${user.name} created ${cat.label.toLowerCase()} "${name}"${viaNote}`,
+    });
+    const home = type === 'milestone' ? 'Timeline / Gantt' : 'Detailed Plan';
+    return {
+        record,
+        location: `${id} on the ${home}`,
+        link: type === 'milestone' ? 'index.html' : 'plan.html',
+    };
 }
 
 app.get('/api/records', requireAuth, (req, res) => {
@@ -585,8 +683,7 @@ app.get('/api/records/:id', requireAuth, (req, res) => {
 
 app.post('/api/records', requireMember, (req, res) => {
     try {
-        const { record, location } = createRecord(req.user, req.body || {}, 'ui');
-        res.status(201).json({ record, location });
+        res.status(201).json(createRecord(req.user, req.body || {}, 'ui'));
     } catch (err) {
         res.status(err.status || 500).json(err.payload || { error: err.message });
     }
@@ -668,6 +765,7 @@ app.get('/api/assistant/catalogue', requireAuth, (req, res) => {
             home: CATALOGUE[t].home,
             required: CATALOGUE[t].required,
             statuses: CATALOGUE[t].statuses,
+            backed: backingOf(t),
             can_create: canCreateType(req.user, t),
         })),
         field_labels: FIELD_LABELS,
@@ -720,8 +818,7 @@ app.post('/api/assistant/interpret', requireAuth, async (req, res) => {
 // Save a confirmed record. Goes through the same create path + permission gate.
 app.post('/api/assistant/commit', requireMember, (req, res) => {
     try {
-        const { record, location } = createRecord(req.user, req.body || {}, 'assistant');
-        res.status(201).json({ record, location });
+        res.status(201).json(createRecord(req.user, req.body || {}, 'assistant'));
     } catch (err) {
         res.status(err.status || 500).json(err.payload || { error: err.message });
     }

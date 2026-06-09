@@ -134,6 +134,7 @@ function ensureColumn(table, column, ddl) {
 ensureColumn('tasks', 'work_stream', "work_stream TEXT NOT NULL DEFAULT ''");
 ensureColumn('tasks', 'sub_stage', "sub_stage TEXT NOT NULL DEFAULT ''");
 ensureColumn('tasks', 'hours', 'hours INTEGER');
+ensureColumn('tasks', 'created_via', "created_via TEXT NOT NULL DEFAULT 'ui'");
 
 // ---- Password hashing (scrypt, no external deps) ----
 export function hashPassword(password) {

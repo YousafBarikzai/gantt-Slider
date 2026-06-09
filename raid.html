@@ -102,6 +102,7 @@
 
             document.getElementById('filter-type').innerHTML +=
                 catalogue.types
+                    .filter((t) => t.backed !== 'tasks')
                     .map((t) => `<option value="${t.type}">${escapeHtml(t.label)}</option>`)
                     .join('');
             document.getElementById('filter-entity').innerHTML +=

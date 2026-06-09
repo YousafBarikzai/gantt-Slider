@@ -87,6 +87,7 @@ export function mountAssistant(user) {
     let owners = [];
 
     const convo = { type: '', draft: {}, pendingField: '' };
+    const transcript = []; // running "role: text" log, sent with the record for audit
     let lastResult = null;
     let awaitingConfirm = false;
     let forceNext = false;
@@ -128,6 +129,7 @@ export function mountAssistant(user) {
         div.innerHTML = esc(text);
         logEl.appendChild(div);
         logEl.scrollTop = logEl.scrollHeight;
+        if (text) transcript.push(`${role === 'user' ? 'User' : 'Assistant'}: ${text}`);
         return div;
     }
 
@@ -211,6 +213,7 @@ export function mountAssistant(user) {
         convo.type = '';
         convo.draft = {};
         convo.pendingField = '';
+        transcript.length = 0;
         lastResult = null;
         awaitingConfirm = false;
         forceNext = false;
@@ -295,10 +298,11 @@ export function mountAssistant(user) {
             type: convo.type,
             fields: convo.draft,
             force: forceNext,
+            transcript: transcript.join('\n'),
         });
         if (ok) {
             cardEl.hidden = true;
-            const link = `<a href="raid.html" class="ai-link">${esc(data.record.id)}</a>`;
+            const link = `<a href="${esc(data.link || 'raid.html')}" class="ai-link">${esc(data.record.id)}</a>`;
             const div = addMsg('bot', '');
             div.innerHTML = `Done. Recorded as ${link} — ${esc(data.location.replace(data.record.id, '').replace(/^ in /, 'in '))}.`;
             await speak(`Done. Recorded as ${data.location}.`);
