@@ -26,6 +26,58 @@ async function post(path, body) {
     return { ok: res.ok, status: res.status, data };
 }
 
+// Concatenate recorded Float32 chunks and resample to the target rate
+// (average decimation — fine for speech).
+function mixdown(chunks, fromRate, toRate) {
+    let len = 0;
+    for (const c of chunks) len += c.length;
+    const all = new Float32Array(len);
+    let o = 0;
+    for (const c of chunks) {
+        all.set(c, o);
+        o += c.length;
+    }
+    if (fromRate === toRate) return all;
+    const ratio = fromRate / toRate;
+    const out = new Float32Array(Math.floor(len / ratio));
+    for (let i = 0; i < out.length; i++) {
+        const start = Math.floor(i * ratio);
+        const end = Math.min(Math.floor((i + 1) * ratio), len);
+        let sum = 0;
+        for (let j = start; j < end; j++) sum += all[j];
+        out[i] = sum / Math.max(1, end - start);
+    }
+    return out;
+}
+
+// Mono 16-bit PCM WAV.
+function encodeWav(samples, sampleRate) {
+    const buf = new ArrayBuffer(44 + samples.length * 2);
+    const v = new DataView(buf);
+    const ws = (off, s) => {
+        for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i));
+    };
+    ws(0, 'RIFF');
+    v.setUint32(4, 36 + samples.length * 2, true);
+    ws(8, 'WAVE');
+    ws(12, 'fmt ');
+    v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true); // PCM
+    v.setUint16(22, 1, true); // mono
+    v.setUint32(24, sampleRate, true);
+    v.setUint32(28, sampleRate * 2, true);
+    v.setUint16(32, 2, true);
+    v.setUint16(34, 16, true);
+    ws(36, 'data');
+    v.setUint32(40, samples.length * 2, true);
+    let off = 44;
+    for (let i = 0; i < samples.length; i++, off += 2) {
+        const s = Math.max(-1, Math.min(1, samples[i]));
+        v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    }
+    return new Blob([buf], { type: 'audio/wav' });
+}
+
 const LEVEL3 = ['', 'Low', 'Medium', 'High'];
 const LEVEL4 = ['', 'Low', 'Medium', 'High', 'Critical'];
 
@@ -94,6 +146,10 @@ export function mountAssistant(user) {
     let greeted = false;
     let recog = null;
     let voice = null;
+    let a3d = null; // 3-D avatar (lazy-loaded on first open; SVG fallback otherwise)
+    let a3dTried = false;
+    let sttMode = 'browser'; // 'server' = self-hosted Whisper, 'browser' = Web Speech
+    let rec = null; // active microphone recording session (server STT mode)
 
     // ---------- voice selection ----------
     function pickVoice() {
@@ -114,6 +170,7 @@ export function mountAssistant(user) {
     // ---------- avatar state ----------
     function setState(s) {
         avatar.className = 'ai-avatar state-' + s;
+        if (a3d) a3d.setState(s);
         stateLabel.textContent = {
             idle: 'Ready',
             listening: 'Listening…',
@@ -146,6 +203,9 @@ export function mountAssistant(user) {
                 if (voice) u.voice = voice;
                 u.rate = 1.0;
                 u.pitch = 1.0;
+                u.onboundary = () => {
+                    if (a3d) a3d.pulse(); // lip-sync the 3-D mouth to each word
+                };
                 u.onend = resolve;
                 u.onerror = resolve;
                 setState('speaking');
@@ -168,7 +228,14 @@ export function mountAssistant(user) {
     }
 
     // ---------- speech in ----------
+    // Two paths: 'server' records raw audio and POSTs it to our own /api/stt
+    // (self-hosted Whisper — nothing leaves the deployment); 'browser' uses the
+    // Web Speech API. Typing always works regardless.
     function listen() {
+        if (sttMode === 'server') {
+            startRecording();
+            return;
+        }
         if (!SR) {
             setState('idle');
             return;
@@ -194,10 +261,113 @@ export function mountAssistant(user) {
         }
     }
     function stop() {
+        abortRecording();
         try {
             recog && recog.stop();
         } catch {
             /* noop */
+        }
+    }
+
+    // ---- server-STT recorder: mic -> 16 kHz mono WAV -> POST /api/stt ----
+    async function startRecording() {
+        if (rec) return;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            await say('Microphone access needs a secure (https) connection — you can type instead.');
+            return;
+        }
+        let stream;
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch {
+            await say("I couldn't access the microphone — you can type instead.");
+            return;
+        }
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const src = ctx.createMediaStreamSource(stream);
+        const proc = ctx.createScriptProcessor(4096, 1, 1);
+        const mute = ctx.createGain();
+        mute.gain.value = 0; // keep the processor alive without echoing the mic
+        const session = {
+            stream, ctx, proc,
+            chunks: [],
+            speech: false, // heard anything above the noise floor yet?
+            quiet: 0, // seconds of continuous silence
+            total: 0, // seconds recorded
+            stopped: false,
+        };
+        rec = session;
+        proc.onaudioprocess = (e) => {
+            if (session.stopped) return;
+            const data = e.inputBuffer.getChannelData(0);
+            session.chunks.push(new Float32Array(data));
+            const secs = data.length / ctx.sampleRate;
+            session.total += secs;
+            let sum = 0;
+            for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+            if (Math.sqrt(sum / data.length) > 0.015) {
+                session.speech = true;
+                session.quiet = 0;
+            } else {
+                session.quiet += secs;
+            }
+            // Auto-stop: 1.4s of silence after speech, 7s of nothing, or a 30s cap.
+            if (
+                (session.speech && session.quiet > 1.4) ||
+                (!session.speech && session.total > 7) ||
+                session.total > 30
+            ) {
+                finishRecording();
+            }
+        };
+        src.connect(proc);
+        proc.connect(mute);
+        mute.connect(ctx.destination);
+        setState('listening');
+        micBtn.textContent = '⏹ Stop';
+    }
+
+    function teardownRecording(session) {
+        session.stopped = true;
+        rec = null;
+        micBtn.textContent = '🎤 Speak';
+        try {
+            session.proc.disconnect();
+        } catch { /* noop */ }
+        session.stream.getTracks().forEach((t) => t.stop());
+        session.ctx.close().catch(() => {});
+    }
+
+    function abortRecording() {
+        if (rec) teardownRecording(rec);
+    }
+
+    async function finishRecording() {
+        const session = rec;
+        if (!session || session.stopped) return;
+        teardownRecording(session);
+        if (!session.speech) {
+            setState('idle'); // heard nothing — don't bother the server
+            return;
+        }
+        setState('thinking');
+        const wav = encodeWav(mixdown(session.chunks, session.ctx.sampleRate, 16000), 16000);
+        try {
+            const res = await fetch('/api/stt', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/octet-stream' },
+                body: wav,
+            });
+            const data = await res.json().catch(() => null);
+            const text = res.ok && data ? String(data.text || '').trim() : '';
+            if (text) {
+                handleUtterance(text);
+            } else {
+                await sayThenListen("Sorry, I didn't catch that — could you say it again?");
+            }
+        } catch {
+            await say("Sorry, I couldn't reach the transcription service — you can type instead.");
         }
     }
 
@@ -458,6 +628,23 @@ export function mountAssistant(user) {
     async function openPanel() {
         panel.hidden = false;
         fab.setAttribute('aria-expanded', 'true');
+        if (!a3dTried) {
+            a3dTried = true;
+            try {
+                // Lazy-load the 3-D head (vendored three.js, served from this
+                // site) only when the panel first opens; SVG stays the fallback.
+                const mod = await import('./avatar3d.js');
+                const stage = el('ai-stage');
+                a3d = mod.createAvatar3D(stage);
+                if (a3d) {
+                    stage.hidden = false;
+                    avatar.style.display = 'none'; // 3-D head replaces the mini avatar
+                }
+            } catch {
+                /* WebGL/three unavailable — keep the SVG avatar */
+            }
+        }
+        if (a3d) a3d.start();
         if (!catalogue) await loadContext();
         if (!greeted) await greet();
     }
@@ -467,6 +654,7 @@ export function mountAssistant(user) {
         stop();
         if (synth) synth.cancel();
         setState('idle');
+        if (a3d) a3d.stop(); // don't render while hidden
     }
 
     async function loadContext() {
@@ -482,7 +670,8 @@ export function mountAssistant(user) {
             owners = (userRes || []).map((u) => u.name);
             el('ai-entities').innerHTML = entities.map((n) => `<option value="${esc(n)}">`).join('');
             el('ai-owners').innerHTML = owners.map((n) => `<option value="${esc(n)}">`).join('');
-            if (!SR) {
+            sttMode = catRes.stt === 'server' ? 'server' : 'browser';
+            if (sttMode === 'browser' && !SR) {
                 micBtn.disabled = true;
                 micBtn.title = 'Voice input not supported in this browser — type instead';
             }
@@ -494,6 +683,10 @@ export function mountAssistant(user) {
     fab.onclick = () => (panel.hidden ? openPanel() : closePanel());
     el('ai-close').onclick = closePanel;
     micBtn.onclick = () => {
+        if (rec) {
+            finishRecording(); // user-initiated stop -> transcribe what we have
+            return;
+        }
         if (synth) synth.cancel();
         listen();
     };
@@ -523,6 +716,7 @@ const TEMPLATE = `
     </div>
     <button id="ai-close" aria-label="Close">&times;</button>
   </header>
+  <div id="ai-stage" hidden aria-hidden="true"></div>
   <div id="ai-log" aria-live="polite"></div>
   <div id="ai-card" hidden></div>
   <div id="ai-controls">
@@ -574,6 +768,12 @@ function injectStyles() {
     }
     #ai-head { display: flex; align-items: center; gap: .7rem; padding: .7rem .9rem;
         background: #0f172a; color: #fff; }
+    #ai-stage {
+        height: 132px; flex: none;
+        background: radial-gradient(120% 140% at 50% 0%, #1d2c55 0%, #0f172a 70%);
+        border-bottom: 1px solid #1e293b;
+    }
+    #ai-stage canvas { width: 100%; height: 100%; }
     #ai-head .ai-titles { display: flex; flex-direction: column; line-height: 1.15; flex: 1; }
     #ai-head .ai-titles strong { font-size: .95rem; }
     #ai-head #ai-state-label { font-size: .72rem; color: #93c5fd; }

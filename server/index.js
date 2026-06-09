@@ -12,6 +12,7 @@ import {
 } from './auth.js';
 import { log, logTaskChanges } from './audit.js';
 import { interpret, aiEnabled, splitFields } from './ai.js';
+import { sttEnabled, transcribe } from './stt.js';
 import {
     CATALOGUE,
     FIELD_LABELS,
@@ -755,9 +756,32 @@ app.delete('/api/records/:id', requireMember, (req, res) => {
 
 // ============================== ASSISTANT ==============================
 // Static catalogue + context the voice assistant needs on the client.
+// Server-side speech-to-text (self-hosted whisper.cpp). The browser records a
+// short 16 kHz mono WAV and POSTs it here; nothing is sent to third parties.
+app.post(
+    '/api/stt',
+    requireAuth,
+    express.raw({ type: () => true, limit: '12mb' }),
+    async (req, res) => {
+        if (!sttEnabled())
+            return res
+                .status(503)
+                .json({ error: 'Server transcription is not configured' });
+        if (!req.body || !req.body.length)
+            return res.status(400).json({ error: 'No audio received' });
+        try {
+            res.json({ text: await transcribe(req.body) });
+        } catch (err) {
+            console.error('[stt] transcription failed:', err.message);
+            res.status(500).json({ error: 'Transcription failed' });
+        }
+    },
+);
+
 app.get('/api/assistant/catalogue', requireAuth, (req, res) => {
     res.json({
         ai_enabled: aiEnabled(),
+        stt: sttEnabled() ? 'server' : 'browser',
         role: req.user.role,
         types: TYPES.map((t) => ({
             type: t,

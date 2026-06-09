@@ -37,6 +37,9 @@ environment variables:
 | `SESSION_SECRET` | Secret used to sign session cookies                | random per install |
 | `ANTHROPIC_API_KEY` | Enables the voice assistant's AI understanding (Claude). Without it, a built-in rules engine is used — no external calls. | _(unset)_ |
 | `ASSISTANT_MODEL`   | Claude model for the assistant                  | `claude-haiku-4-5` |
+| `WHISPER_BIN`       | Path to a whisper.cpp `whisper-cli` binary — enables self-hosted speech-to-text at `/api/stt`. The Dockerfile builds and sets this automatically. | set in Docker |
+| `WHISPER_MODEL`     | Path to the ggml speech model                   | set in Docker      |
+| `WHISPER_LANG`      | Transcription language                          | `en`               |
 
 ```bash
 TEAM_PASSWORD='our-real-password' SESSION_SECRET="$(openssl rand -hex 32)" pnpm start
@@ -65,9 +68,21 @@ The seed creates these users: **Yousaf** (admin), **Alex**, **Tommy**, **Tom**
 ## Voice assistant
 
 A floating avatar (bottom-right of every signed-in page) lets you **speak** a
-project record instead of filling in a form. It listens (browser Web Speech API),
-classifies what you said into the right PMO type, asks for any missing fields,
-shows an editable confirmation card, and — only after you confirm — saves it.
+project record instead of filling in a form. It listens, classifies what you said
+into the right PMO type, asks for any missing fields, shows an editable
+confirmation card, and — only after you confirm — saves it.
+
+Everything is served from this deployment — users install nothing:
+
+- **Speech-to-text** is self-hosted: the browser records a short WAV and POSTs it
+  to `/api/stt`, where a whisper.cpp binary + model (built into the Docker image)
+  transcribe it. No third-party speech service. If Whisper isn't configured (e.g.
+  plain local dev), the widget falls back to the browser's Web Speech API, then
+  to typing.
+- **The 3-D avatar** is rendered with a locally vendored `three.js`
+  (`vendor/three.module.min.js`, no CDN) — see `avatar3d.js`. It lazy-loads when
+  the panel first opens and falls back to the built-in SVG avatar without WebGL.
+- **Text-to-speech** uses the browser's built-in voices (`speechSynthesis`).
 
 - **Understanding** runs server-side: `POST /api/assistant/interpret` calls Claude
   when `ANTHROPIC_API_KEY` is set, otherwise a transparent rules engine (no key, no
