@@ -40,6 +40,8 @@ environment variables:
 | `WHISPER_BIN`       | Path to a whisper.cpp `whisper-cli` binary — enables self-hosted speech-to-text at `/api/stt`. The Dockerfile builds and sets this automatically. | set in Docker |
 | `WHISPER_MODEL`     | Path to the ggml speech model                   | set in Docker      |
 | `WHISPER_LANG`      | Transcription language                          | `en`               |
+| `PIPER_BIN`         | Path to a Piper TTS binary — enables self-hosted speech at `/api/tts` so users need no installed browser voices. The Dockerfile sets this automatically. | set in Docker |
+| `PIPER_VOICE`       | Path to the Piper voice model (`.onnx`)         | set in Docker      |
 
 ```bash
 TEAM_PASSWORD='our-real-password' SESSION_SECRET="$(openssl rand -hex 32)" pnpm start
@@ -82,7 +84,11 @@ Everything is served from this deployment — users install nothing:
 - **The 3-D avatar** is rendered with a locally vendored `three.js`
   (`vendor/three.module.min.js`, no CDN) — see `avatar3d.js`. It lazy-loads when
   the panel first opens and falls back to the built-in SVG avatar without WebGL.
-- **Text-to-speech** uses the browser's built-in voices (`speechSynthesis`).
+- **Text-to-speech** is self-hosted too: the server synthesises the avatar's
+  voice with Piper (binary + voice model baked into the Docker image) and the
+  browser plays the returned WAV with the built-in audio element — no installed
+  voices, no plugins. Falls back to the browser's `speechSynthesis`, then to
+  text-only.
 
 - **Understanding** runs server-side: `POST /api/assistant/interpret` calls Claude
   when `ANTHROPIC_API_KEY` is set, otherwise a transparent rules engine (no key, no

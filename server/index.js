@@ -13,6 +13,7 @@ import {
 import { log, logTaskChanges } from './audit.js';
 import { interpret, aiEnabled, splitFields } from './ai.js';
 import { sttEnabled, transcribe } from './stt.js';
+import { ttsEnabled, synthesize } from './tts.js';
 import {
     CATALOGUE,
     FIELD_LABELS,
@@ -778,10 +779,28 @@ app.post(
     },
 );
 
+// Server-side text-to-speech (self-hosted Piper). Returns a WAV the browser
+// plays with the built-in <audio> element — no installed voices needed.
+app.post('/api/tts', requireAuth, async (req, res) => {
+    if (!ttsEnabled())
+        return res
+            .status(503)
+            .json({ error: 'Server speech is not configured' });
+    const text = String(req.body?.text || '').trim().slice(0, 600);
+    if (!text) return res.status(400).json({ error: 'No text' });
+    try {
+        res.set('Content-Type', 'audio/wav').send(await synthesize(text));
+    } catch (err) {
+        console.error('[tts] synthesis failed:', err.message);
+        res.status(500).json({ error: 'Speech synthesis failed' });
+    }
+});
+
 app.get('/api/assistant/catalogue', requireAuth, (req, res) => {
     res.json({
         ai_enabled: aiEnabled(),
         stt: sttEnabled() ? 'server' : 'browser',
+        tts: ttsEnabled() ? 'server' : 'browser',
         role: req.user.role,
         types: TYPES.map((t) => ({
             type: t,

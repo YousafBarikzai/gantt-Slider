@@ -149,7 +149,9 @@ export function mountAssistant(user) {
     let a3d = null; // 3-D avatar (lazy-loaded on first open; SVG fallback otherwise)
     let a3dTried = false;
     let sttMode = 'browser'; // 'server' = self-hosted Whisper, 'browser' = Web Speech
+    let ttsMode = 'browser'; // 'server' = self-hosted Piper, 'browser' = speechSynthesis
     let rec = null; // active microphone recording session (server STT mode)
+    let currentAudio = null; // playing server-TTS clip (so we can cancel it)
 
     // ---------- voice selection ----------
     function pickVoice() {
@@ -191,7 +193,60 @@ export function mountAssistant(user) {
     }
 
     // ---------- speech out ----------
+    // Server-first: the voice is synthesised by our own /api/tts (self-hosted
+    // Piper baked into the deployment), so users need no installed browser
+    // voices and no plugins — the reply is just a WAV played by the built-in
+    // audio element. Falls back to speechSynthesis, then to silent text.
     function speak(text) {
+        if (ttsMode === 'server') {
+            return speakServer(text).catch(() => speakBrowser(text));
+        }
+        return speakBrowser(text);
+    }
+
+    function stopSpeaking() {
+        if (currentAudio) {
+            try {
+                currentAudio.pause();
+            } catch { /* noop */ }
+            currentAudio = null;
+        }
+        if (synth) synth.cancel();
+    }
+
+    async function speakServer(text) {
+        setState('speaking');
+        const res = await fetch('/api/tts', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text }),
+        });
+        if (!res.ok) throw new Error('tts unavailable');
+        const blob = await res.blob();
+        await new Promise((resolve) => {
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            currentAudio = audio;
+            // No word-boundary events from raw audio — pulse the 3-D mouth on a
+            // speech-ish cadence while the clip plays.
+            const pulser = setInterval(() => {
+                if (a3d) a3d.pulse(0.45 + Math.random() * 0.4);
+            }, 150);
+            const done = () => {
+                clearInterval(pulser);
+                URL.revokeObjectURL(url);
+                if (currentAudio === audio) currentAudio = null;
+                resolve();
+            };
+            audio.onended = done;
+            audio.onerror = done;
+            audio.onpause = done; // covers stopSpeaking() cancellation
+            audio.play().catch(done);
+        });
+    }
+
+    function speakBrowser(text) {
         return new Promise((resolve) => {
             if (!synth) {
                 resolve();
@@ -652,7 +707,7 @@ export function mountAssistant(user) {
         panel.hidden = true;
         fab.setAttribute('aria-expanded', 'false');
         stop();
-        if (synth) synth.cancel();
+        stopSpeaking();
         setState('idle');
         if (a3d) a3d.stop(); // don't render while hidden
     }
@@ -671,6 +726,7 @@ export function mountAssistant(user) {
             el('ai-entities').innerHTML = entities.map((n) => `<option value="${esc(n)}">`).join('');
             el('ai-owners').innerHTML = owners.map((n) => `<option value="${esc(n)}">`).join('');
             sttMode = catRes.stt === 'server' ? 'server' : 'browser';
+            ttsMode = catRes.tts === 'server' ? 'server' : 'browser';
             if (sttMode === 'browser' && !SR) {
                 micBtn.disabled = true;
                 micBtn.title = 'Voice input not supported in this browser — type instead';
@@ -687,7 +743,7 @@ export function mountAssistant(user) {
             finishRecording(); // user-initiated stop -> transcribe what we have
             return;
         }
-        if (synth) synth.cancel();
+        stopSpeaking();
         listen();
     };
     const submitText = () => {
