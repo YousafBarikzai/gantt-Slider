@@ -1,4 +1,5 @@
 // Shared frontend helpers used by index.html and log.html.
+import { mountAssistant } from './assistant.js';
 
 export async function api(path, opts = {}) {
     const res = await fetch('/api' + path, {
@@ -69,6 +70,7 @@ export function renderNav(user, active) {
     const links = [
         { href: 'index.html', label: 'Board', key: 'board' },
         { href: 'plan.html', label: 'Detailed Plan', key: 'plan' },
+        { href: 'raid.html', label: 'RAID & Logs', key: 'raid' },
         { href: 'log.html', label: 'Activity Log', key: 'log' },
     ];
     el.innerHTML = `
@@ -93,6 +95,9 @@ export function renderNav(user, active) {
         });
         window.location.replace('login.html');
     };
+
+    // Mount the voice assistant once, on every authenticated page.
+    mountAssistant(user);
 }
 
 export const NAV_CSS = `

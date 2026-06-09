@@ -11,6 +11,23 @@ import {
     requireAdmin,
 } from './auth.js';
 import { log, logTaskChanges } from './audit.js';
+import { interpret, aiEnabled, splitFields } from './ai.js';
+import { sttEnabled, transcribe } from './stt.js';
+import { ttsEnabled, synthesize } from './tts.js';
+import {
+    CATALOGUE,
+    FIELD_LABELS,
+    TYPES,
+    missingRequired,
+    normalizeStatus,
+    normalizeLevel,
+    backingOf,
+} from './records.js';
+import {
+    canCreateType,
+    effectiveMatrix,
+    setMemberOverrides,
+} from './permissions.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -141,6 +158,7 @@ function serializeTask(row) {
         dependencies: row.dependencies,
         custom_class: row.custom_class,
         sort_order: row.sort_order,
+        created_via: row.created_via,
         created_at: row.created_at,
         updated_at: row.updated_at,
     };
@@ -373,6 +391,480 @@ app.post('/api/access-requests/:id/decline', requireAdmin, (req, res) => {
         req.params.id,
     );
     res.json({ ok: true });
+});
+
+// ============================== ENTITIES ==============================
+app.get('/api/entities', requireAuth, (_req, res) => {
+    res.json(
+        db.prepare('SELECT id, name, status FROM entities ORDER BY name').all(),
+    );
+});
+
+app.post('/api/entities', requireMember, (req, res) => {
+    const name = (req.body?.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+    db.prepare('INSERT OR IGNORE INTO entities (name) VALUES (?)').run(name);
+    res.status(201).json(
+        db.prepare('SELECT id, name, status FROM entities WHERE name = ?').get(name),
+    );
+});
+
+// ============================== RECORDS ==============================
+function serializeRecord(row) {
+    const entity = row.entity_id
+        ? db.prepare('SELECT name FROM entities WHERE id = ?').get(row.entity_id)
+        : null;
+    const owner = row.owner_id
+        ? db.prepare('SELECT name FROM users WHERE id = ?').get(row.owner_id)
+        : null;
+    let fields = {};
+    try {
+        fields = JSON.parse(row.fields || '{}');
+    } catch {
+        fields = {};
+    }
+    return {
+        id: row.id,
+        type: row.type,
+        title: row.title,
+        description: row.description,
+        entity_id: row.entity_id,
+        entity_name: entity ? entity.name : null,
+        work_stream: row.work_stream,
+        status: row.status,
+        priority: row.priority,
+        owner_id: row.owner_id,
+        owner_name: owner ? owner.name : row.owner_name || null,
+        due_date: row.due_date,
+        fields,
+        created_by: row.created_by,
+        created_via: row.created_via,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    };
+}
+
+function httpError(status, error, extra = {}) {
+    return Object.assign(new Error(error), { status, payload: { error, ...extra } });
+}
+
+// Resolve an entity name to an id, creating the entity if it's new.
+function resolveEntity(name) {
+    const n = (name || '').trim();
+    if (!n) return null;
+    const found = db
+        .prepare('SELECT id FROM entities WHERE name = ? COLLATE NOCASE')
+        .get(n);
+    if (found) return found.id;
+    const info = db.prepare('INSERT INTO entities (name) VALUES (?)').run(n);
+    return info.lastInsertRowid;
+}
+
+// Resolve an owner name to a known user id (or keep it as free text).
+function resolveOwner(name) {
+    const n = (name || '').trim();
+    if (!n) return { owner_id: null, owner_name: '' };
+    const u = db
+        .prepare('SELECT id FROM users WHERE name = ? COLLATE NOCASE AND active = 1')
+        .get(n);
+    return u ? { owner_id: u.id, owner_name: '' } : { owner_id: null, owner_name: n };
+}
+
+function nextRecordId(type) {
+    const prefix = CATALOGUE[type].prefix;
+    const rows = db
+        .prepare("SELECT id FROM records WHERE id LIKE ? ORDER BY id")
+        .all(prefix + '-%');
+    let max = 0;
+    for (const r of rows) {
+        const n = parseInt(String(r.id).split('-')[1], 10);
+        if (Number.isFinite(n) && n > max) max = n;
+    }
+    return `${prefix}-${String(max + 1).padStart(4, '0')}`;
+}
+
+const OPEN_ISH = ['Closed', 'Resolved', 'Done', 'Rejected', 'Cleared', 'Achieved', 'Invalid'];
+
+// Core create path shared by the manual API and the assistant. `via` is 'ui'|'assistant'.
+function createRecord(user, body, via) {
+    const type = body.type;
+    if (!CATALOGUE[type]) throw httpError(400, `Unknown record type: ${type}`);
+    if (!canCreateType(user, type))
+        throw httpError(403, `You don't have permission to create ${CATALOGUE[type].label.toLowerCase()} records`, {
+            permission: true,
+            type,
+        });
+
+    const f = { ...(body.fields || {}) };
+    // Normalise level-ish + status fields server-side regardless of source.
+    for (const k of ['impact', 'likelihood', 'severity', 'priority']) {
+        if (f[k]) f[k] = normalizeLevel(f[k]);
+    }
+    f.status = normalizeStatus(type, f.status);
+
+    const missing = missingRequired(type, f);
+    if (missing.length)
+        throw httpError(400, 'Missing required fields', { missing });
+
+    // Task-backed types (task, milestone) live in the tasks table so they show
+    // on the Board, Gantt timeline and Detailed Plan.
+    if (backingOf(type) === 'tasks') return createTaskBacked(user, type, f, body, via);
+
+    const entity_id = resolveEntity(f.entity);
+    const { owner_id, owner_name } = resolveOwner(f.owner);
+
+    // Duplicate guard: same type + entity + title that's still open (unless forced).
+    if (!body.force) {
+        const dupes = db
+            .prepare('SELECT id, title, status FROM records WHERE type = ? AND IFNULL(entity_id,0) = IFNULL(?,0)')
+            .all(type, entity_id);
+        const norm = (s) => String(s || '').trim().toLowerCase();
+        const dup = dupes.find(
+            (d) => norm(d.title) === norm(f.title) && !OPEN_ISH.includes(d.status),
+        );
+        if (dup)
+            throw httpError(409, 'A similar open record already exists', {
+                duplicate: { id: dup.id, title: dup.title },
+            });
+    }
+
+    const id = nextRecordId(type);
+    db.prepare(`
+        INSERT INTO records (id, type, title, description, entity_id, work_stream,
+                             status, priority, owner_id, owner_name, due_date,
+                             fields, created_by, created_via)
+        VALUES (@id, @type, @title, @description, @entity_id, @work_stream,
+                @status, @priority, @owner_id, @owner_name, @due_date,
+                @fields, @created_by, @created_via)
+    `).run({
+        id,
+        type,
+        title: f.title,
+        description: f.description || '',
+        entity_id,
+        work_stream: f.work_stream || '',
+        status: f.status,
+        priority: f.priority || '',
+        owner_id,
+        owner_name,
+        due_date: f.due_date || f.needed_by || f.date || null,
+        fields: JSON.stringify(splitFields(f)),
+        created_by: user.id ?? null,
+        created_via: via,
+    });
+
+    const record = serializeRecord(
+        db.prepare('SELECT * FROM records WHERE id = ?').get(id),
+    );
+    const viaNote = via === 'assistant' ? ' via the AI assistant' : '';
+    const transcript = via === 'assistant' && body.transcript ? String(body.transcript).slice(0, 4000) : null;
+    log(user, {
+        entity_type: type,
+        entity_id: id,
+        entity_name: record.title,
+        action: 'create',
+        field: transcript ? 'transcript' : null,
+        new_value: transcript,
+        summary: `${user.name} created ${CATALOGUE[type].label.toLowerCase()} "${record.title}"${viaNote}`,
+    });
+
+    const where = record.entity_name ? ` under ${record.entity_name}` : '';
+    return {
+        record,
+        location: `${id} in the ${CATALOGUE[type].home}${where}`,
+        link: 'raid.html',
+    };
+}
+
+// Create a task-backed record (task / milestone) in the tasks table.
+function createTaskBacked(user, type, f, body, via) {
+    const cat = CATALOGUE[type];
+    const name = f.title;
+    const iso = (d) => d.toISOString().slice(0, 10);
+    const today = new Date();
+    const plus = (n) => {
+        const d = new Date(today);
+        d.setDate(d.getDate() + n);
+        return iso(d);
+    };
+
+    let start, end;
+    if (type === 'milestone') {
+        const date = f.date || f.due_date || iso(today);
+        start = date;
+        end = date;
+    } else {
+        start = f.start || iso(today);
+        end = f.due_date || f.date || plus(7);
+        if (new Date(end) < new Date(start)) end = start;
+    }
+
+    if (!body.force) {
+        const norm = (s) => String(s || '').trim().toLowerCase();
+        const dup = db
+            .prepare('SELECT id, name, status FROM tasks')
+            .all()
+            .find((t) => norm(t.name) === norm(name) && t.status !== 'Done');
+        if (dup)
+            throw httpError(409, 'A similar open task already exists', {
+                duplicate: { id: dup.id, title: dup.name },
+            });
+    }
+
+    const { owner_id } = resolveOwner(f.owner);
+    const status = normalizeStatus(type, f.status);
+    const id = `Task-${Date.now()}`;
+    const maxOrder = db.prepare('SELECT MAX(sort_order) AS m FROM tasks').get().m ?? -1;
+    db.prepare(`
+        INSERT INTO tasks (id, name, description, status, priority, assignee_id,
+                           work_stream, sub_stage, hours, start, end, progress,
+                           dependencies, custom_class, sort_order, created_via)
+        VALUES (@id, @name, @description, @status, @priority, @assignee_id,
+                @work_stream, @sub_stage, @hours, @start, @end, @progress,
+                @dependencies, @custom_class, @sort_order, @created_via)
+    `).run({
+        id,
+        name,
+        description: f.description || '',
+        status,
+        priority: f.priority || 'Medium',
+        assignee_id: owner_id,
+        work_stream: f.work_stream || '',
+        sub_stage: f.source || '',
+        hours: null,
+        start,
+        end,
+        progress: 0,
+        dependencies: '',
+        custom_class: type === 'milestone' ? 'milestone' : '',
+        sort_order: maxOrder + 1,
+        created_via: via,
+    });
+
+    const record = serializeTask(db.prepare('SELECT * FROM tasks WHERE id = ?').get(id));
+    const viaNote = via === 'assistant' ? ' via the AI assistant' : '';
+    const transcript = via === 'assistant' && body.transcript ? String(body.transcript).slice(0, 4000) : null;
+    log(user, {
+        entity_type: 'task',
+        entity_id: id,
+        entity_name: name,
+        action: 'create',
+        field: transcript ? 'transcript' : null,
+        new_value: transcript,
+        summary: `${user.name} created ${cat.label.toLowerCase()} "${name}"${viaNote}`,
+    });
+    const home = type === 'milestone' ? 'Timeline / Gantt' : 'Detailed Plan';
+    return {
+        record,
+        location: `${id} on the ${home}`,
+        link: type === 'milestone' ? 'index.html' : 'plan.html',
+    };
+}
+
+app.get('/api/records', requireAuth, (req, res) => {
+    const { type, entity_id } = req.query;
+    let sql = 'SELECT * FROM records WHERE 1=1';
+    const params = [];
+    if (type) {
+        sql += ' AND type = ?';
+        params.push(type);
+    }
+    if (entity_id) {
+        sql += ' AND entity_id = ?';
+        params.push(entity_id);
+    }
+    sql += ' ORDER BY created_at DESC, id DESC';
+    res.json(db.prepare(sql).all(...params).map(serializeRecord));
+});
+
+app.get('/api/records/:id', requireAuth, (req, res) => {
+    const row = db.prepare('SELECT * FROM records WHERE id = ?').get(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    res.json(serializeRecord(row));
+});
+
+app.post('/api/records', requireMember, (req, res) => {
+    try {
+        res.status(201).json(createRecord(req.user, req.body || {}, 'ui'));
+    } catch (err) {
+        res.status(err.status || 500).json(err.payload || { error: err.message });
+    }
+});
+
+app.patch('/api/records/:id', requireMember, (req, res) => {
+    const existing = db
+        .prepare('SELECT * FROM records WHERE id = ?')
+        .get(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    const before = serializeRecord(existing);
+    const b = req.body || {};
+
+    const updates = {};
+    for (const col of ['title', 'description', 'work_stream', 'priority', 'due_date']) {
+        if (col in b) updates[col] = b[col];
+    }
+    if ('status' in b) updates.status = normalizeStatus(existing.type, b.status);
+    if ('entity' in b) updates.entity_id = resolveEntity(b.entity);
+    if ('owner' in b) {
+        const { owner_id, owner_name } = resolveOwner(b.owner);
+        updates.owner_id = owner_id;
+        updates.owner_name = owner_name;
+    }
+    if (b.fields && typeof b.fields === 'object') {
+        const merged = { ...before.fields, ...b.fields };
+        updates.fields = JSON.stringify(merged);
+    }
+
+    if (Object.keys(updates).length) {
+        const set = Object.keys(updates).map((k) => `${k} = @${k}`).join(', ');
+        db.prepare(
+            `UPDATE records SET ${set}, updated_at = datetime('now') WHERE id = @id`,
+        ).run({ ...updates, id: req.params.id });
+    }
+    const after = serializeRecord(
+        db.prepare('SELECT * FROM records WHERE id = ?').get(req.params.id),
+    );
+    if ('status' in b && before.status !== after.status) {
+        log(req.user, {
+            entity_type: existing.type,
+            entity_id: after.id,
+            entity_name: after.title,
+            action: 'update',
+            field: 'status',
+            old_value: before.status,
+            new_value: after.status,
+            summary: `${req.user.name} changed status of "${after.title}" from "${before.status}" to "${after.status}"`,
+        });
+    }
+    res.json(after);
+});
+
+app.delete('/api/records/:id', requireMember, (req, res) => {
+    const existing = db
+        .prepare('SELECT * FROM records WHERE id = ?')
+        .get(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    db.prepare('DELETE FROM records WHERE id = ?').run(req.params.id);
+    log(req.user, {
+        entity_type: existing.type,
+        entity_id: existing.id,
+        entity_name: existing.title,
+        action: 'delete',
+        summary: `${req.user.name} deleted ${existing.type} "${existing.title}"`,
+    });
+    res.json({ ok: true });
+});
+
+// ============================== ASSISTANT ==============================
+// Static catalogue + context the voice assistant needs on the client.
+// Server-side speech-to-text (self-hosted whisper.cpp). The browser records a
+// short 16 kHz mono WAV and POSTs it here; nothing is sent to third parties.
+app.post(
+    '/api/stt',
+    requireAuth,
+    express.raw({ type: () => true, limit: '12mb' }),
+    async (req, res) => {
+        if (!sttEnabled())
+            return res
+                .status(503)
+                .json({ error: 'Server transcription is not configured' });
+        if (!req.body || !req.body.length)
+            return res.status(400).json({ error: 'No audio received' });
+        try {
+            res.json({ text: await transcribe(req.body) });
+        } catch (err) {
+            console.error('[stt] transcription failed:', err.message);
+            res.status(500).json({ error: 'Transcription failed' });
+        }
+    },
+);
+
+// Server-side text-to-speech (self-hosted Piper). Returns a WAV the browser
+// plays with the built-in <audio> element — no installed voices needed.
+app.post('/api/tts', requireAuth, async (req, res) => {
+    if (!ttsEnabled())
+        return res
+            .status(503)
+            .json({ error: 'Server speech is not configured' });
+    const text = String(req.body?.text || '').trim().slice(0, 600);
+    if (!text) return res.status(400).json({ error: 'No text' });
+    try {
+        res.set('Content-Type', 'audio/wav').send(await synthesize(text));
+    } catch (err) {
+        console.error('[tts] synthesis failed:', err.message);
+        res.status(500).json({ error: 'Speech synthesis failed' });
+    }
+});
+
+app.get('/api/assistant/catalogue', requireAuth, (req, res) => {
+    res.json({
+        ai_enabled: aiEnabled(),
+        stt: sttEnabled() ? 'server' : 'browser',
+        tts: ttsEnabled() ? 'server' : 'browser',
+        role: req.user.role,
+        types: TYPES.map((t) => ({
+            type: t,
+            label: CATALOGUE[t].label,
+            home: CATALOGUE[t].home,
+            required: CATALOGUE[t].required,
+            statuses: CATALOGUE[t].statuses,
+            backed: backingOf(t),
+            can_create: canCreateType(req.user, t),
+        })),
+        field_labels: FIELD_LABELS,
+    });
+});
+
+// Admin: view / edit which record types the member role may create.
+app.get('/api/permissions', requireAdmin, (_req, res) => {
+    res.json(effectiveMatrix());
+});
+
+app.put('/api/permissions', requireAdmin, (req, res) => {
+    setMemberOverrides((req.body && req.body.member) || {});
+    log(req.user, {
+        entity_type: 'auth',
+        action: 'update',
+        summary: `${req.user.name} updated record-creation permissions`,
+    });
+    res.json(effectiveMatrix());
+});
+
+// Understand an utterance. Read-only (writes nothing) — even guests may draft.
+app.post('/api/assistant/interpret', requireAuth, async (req, res) => {
+    const b = req.body || {};
+    const entities = db
+        .prepare('SELECT name FROM entities ORDER BY name')
+        .all()
+        .map((e) => e.name);
+    const owners = db
+        .prepare('SELECT name FROM users WHERE active = 1')
+        .all()
+        .map((u) => u.name);
+    try {
+        const result = await interpret({
+            transcript: String(b.transcript || ''),
+            draft: b.draft && typeof b.draft === 'object' ? b.draft : {},
+            pendingField: b.pendingField || '',
+            type: b.type || '',
+            entities,
+            owners,
+            today: new Date().toISOString().slice(0, 10),
+        });
+        res.json(result);
+    } catch (err) {
+        console.error('[assistant] interpret error:', err.message);
+        res.status(500).json({ error: 'Could not interpret that just now.' });
+    }
+});
+
+// Save a confirmed record. Goes through the same create path + permission gate.
+app.post('/api/assistant/commit', requireMember, (req, res) => {
+    try {
+        res.status(201).json(createRecord(req.user, req.body || {}, 'assistant'));
+    } catch (err) {
+        res.status(err.status || 500).json(err.payload || { error: err.message });
+    }
 });
 
 // ============================== STATIC ==============================

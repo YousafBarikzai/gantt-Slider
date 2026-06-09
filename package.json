@@ -54,6 +54,7 @@
         "playwright-core": "^1.60.0",
         "postcss-nesting": "^12.1.2",
         "prettier": "3.2.5",
+        "three": "^0.184.0",
         "vite": "^5.2.10"
     },
     "eslintIgnore": [
