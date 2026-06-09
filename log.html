@@ -23,6 +23,19 @@
             .action-delete { background: #fee2e2; color: #991b1b; }
             .action-comment { background: #fef9c3; color: #854d0e; }
             .action-login { background: #f1f5f9; color: #475569; }
+            .ai-chip {
+                font-size: 0.6rem; font-weight: 700; padding: 0.05rem 0.35rem; border-radius: 999px;
+                background: #dcfce7; color: #166534; margin-left: 0.35rem; vertical-align: middle;
+            }
+            details.transcript { margin-top: 0.25rem; }
+            details.transcript summary {
+                cursor: pointer; font-size: 0.72rem; color: #2563eb; user-select: none;
+            }
+            details.transcript pre {
+                margin: 0.35rem 0 0; padding: 0.5rem 0.65rem; background: #f1f5f9;
+                border: 1px solid #e2e8f0; border-radius: 8px; font-size: 0.72rem;
+                white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow-y: auto;
+            }
         </style>
     </head>
     <body>
@@ -81,6 +94,22 @@
                     .map((u) => `<option>${escapeHtml(u.name)}</option>`)
                     .join('');
 
+            // Add the PMO record types (risks, issues, decisions, ...) to the
+            // activity filter. Task-backed types log as entity_type 'task',
+            // which the hardcoded "Tasks" option already covers.
+            try {
+                const catalogue = await api('/assistant/catalogue');
+                document.getElementById('filter-type').innerHTML += catalogue.types
+                    .filter((t) => t.backed !== 'tasks')
+                    .map(
+                        (t) =>
+                            `<option value="${t.type}">${escapeHtml(t.label)}s</option>`,
+                    )
+                    .join('');
+            } catch {
+                /* filter just stays shorter if the catalogue can't load */
+            }
+
             async function load() {
                 const params = new URLSearchParams();
                 const u = document.getElementById('filter-user').value;
@@ -90,14 +119,22 @@
                 const logs = await api('/logs?' + params.toString());
                 document.getElementById('log-body').innerHTML = logs.length
                     ? logs
-                          .map(
-                              (l) => `<tr>
+                          .map((l) => {
+                              const viaAI = l.summary.includes('via the AI assistant');
+                              const transcript =
+                                  l.field === 'transcript' && l.new_value
+                                      ? `<details class="transcript">
+                                            <summary>View conversation</summary>
+                                            <pre>${escapeHtml(l.new_value)}</pre>
+                                        </details>`
+                                      : '';
+                              return `<tr>
                                 <td class="text-muted small">${timeAgo(l.created_at)}</td>
                                 <td>${escapeHtml(l.user_name)}</td>
                                 <td><span class="action-badge action-${l.action}">${l.action}</span></td>
-                                <td>${escapeHtml(l.summary)}</td>
-                              </tr>`,
-                          )
+                                <td>${escapeHtml(l.summary)}${viaAI ? '<span class="ai-chip">AI</span>' : ''}${transcript}</td>
+                              </tr>`;
+                          })
                           .join('')
                     : '<tr><td colspan="4" class="text-muted text-center py-4">No activity yet.</td></tr>';
             }
