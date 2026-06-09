@@ -88,9 +88,40 @@ CREATE TABLE IF NOT EXISTS access_requests (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Entities (e.g. Turkey, Morocco) that records can be filed under.
+CREATE TABLE IF NOT EXISTS entities (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL UNIQUE,
+    status     TEXT NOT NULL DEFAULT 'Active',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Generic PMO records: risks, issues, decisions, actions, dependencies, etc.
+-- Common fields are promoted to columns; type-specific fields live in a JSON column.
+CREATE TABLE IF NOT EXISTS records (
+    id          TEXT PRIMARY KEY,            -- e.g. RISK-0007
+    type        TEXT NOT NULL,               -- risk | issue | decision | ...
+    title       TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    entity_id   INTEGER REFERENCES entities(id),
+    work_stream TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'Open',
+    priority    TEXT NOT NULL DEFAULT '',
+    owner_id    INTEGER REFERENCES users(id),
+    owner_name  TEXT NOT NULL DEFAULT '',     -- free-text fallback when owner isn't a known user
+    due_date    TEXT,
+    fields      TEXT NOT NULL DEFAULT '{}',   -- JSON of type-specific fields
+    created_by  INTEGER REFERENCES users(id),
+    created_via TEXT NOT NULL DEFAULT 'ui',   -- 'ui' | 'assistant'
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_comments_task ON task_comments(task_id);
+CREATE INDEX IF NOT EXISTS idx_records_type ON records(type);
+CREATE INDEX IF NOT EXISTS idx_records_entity ON records(entity_id);
 `);
 
 // ---- Migrations (add columns to databases that predate them; data-safe) ----
@@ -195,6 +226,14 @@ function seed() {
     );
 }
 seed();
+
+// ---- Seed a couple of example entities (idempotent; safe on every boot) ----
+{
+    const insertEntity = db.prepare(
+        'INSERT OR IGNORE INTO entities (name) VALUES (?)',
+    );
+    for (const name of ['Turkey', 'Morocco']) insertEntity.run(name);
+}
 
 // ---- One-time demo backfill for the Detailed Plan ----
 // Gives the sample tasks a Work Stream / Sub-stage so the plan isn't empty, and

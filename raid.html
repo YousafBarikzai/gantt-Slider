@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>RAID &amp; Logs · Project Planner</title>
+        <link rel="stylesheet" href="vendor/bootstrap.min.css" />
+        <style>
+            body {
+                margin: 0;
+                font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+                background: #f8fafc;
+            }
+            .page { margin: 1.5rem; }
+            .filters { display: flex; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
+            table { background: #fff; }
+            .id-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; white-space: nowrap; }
+            .type-badge {
+                font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.03em;
+                padding: 0.1rem 0.45rem; border-radius: 4px; font-weight: 700;
+                background: #e0e7ff; color: #3730a3;
+            }
+            .ai-chip {
+                font-size: 0.6rem; font-weight: 700; padding: 0.05rem 0.35rem; border-radius: 999px;
+                background: #dcfce7; color: #166534; margin-left: 0.35rem; vertical-align: middle;
+            }
+            .status-sel { font-size: 0.78rem; padding: 0.1rem 0.3rem; border: 1px solid #cbd5e1; border-radius: 6px; }
+            .muted { color: #94a3b8; }
+            .key-bits { font-size: 0.72rem; color: #475569; }
+        </style>
+    </head>
+    <body>
+        <div id="app-nav" class="app-nav"></div>
+        <div class="page">
+            <h3>RAID &amp; Logs</h3>
+            <p class="text-muted small">
+                Risks, issues, decisions, actions, dependencies and more — including everything
+                created by the voice assistant. Tap the avatar (bottom-right) to add one by talking.
+            </p>
+            <div class="filters">
+                <select id="filter-type" class="form-select form-select-sm" style="width:auto">
+                    <option value="">All types</option>
+                </select>
+                <select id="filter-entity" class="form-select form-select-sm" style="width:auto">
+                    <option value="">All entities</option>
+                </select>
+                <button id="refresh" class="btn btn-sm btn-outline-secondary">Refresh</button>
+                <button id="new-record" class="btn btn-sm btn-primary ms-auto">＋ New (ask the assistant)</button>
+            </div>
+            <table class="table table-sm table-hover align-middle">
+                <thead>
+                    <tr>
+                        <th style="width:96px">ID</th>
+                        <th style="width:96px">Type</th>
+                        <th>Title</th>
+                        <th style="width:110px">Entity</th>
+                        <th style="width:110px">Owner</th>
+                        <th style="width:130px">Status</th>
+                        <th style="width:150px">Key info</th>
+                        <th style="width:120px">Created</th>
+                    </tr>
+                </thead>
+                <tbody id="raid-body"></tbody>
+            </table>
+        </div>
+
+        <script type="module">
+            import {
+                api,
+                requireSession,
+                renderNav,
+                NAV_CSS,
+                escapeHtml,
+                timeAgo,
+            } from './app.js';
+
+            const style = document.createElement('style');
+            style.textContent = NAV_CSS;
+            document.head.appendChild(style);
+
+            const user = await requireSession();
+            const isGuest = user.role === 'guest';
+            renderNav(user, 'raid');
+
+            const [catalogue, entities] = await Promise.all([
+                fetch('/api/assistant/catalogue', { credentials: 'same-origin' }).then((r) => r.json()),
+                api('/entities'),
+            ]);
+            const typesByKey = Object.fromEntries(catalogue.types.map((t) => [t.type, t]));
+
+            document.getElementById('filter-type').innerHTML +=
+                catalogue.types
+                    .map((t) => `<option value="${t.type}">${escapeHtml(t.label)}</option>`)
+                    .join('');
+            document.getElementById('filter-entity').innerHTML +=
+                entities
+                    .map((e) => `<option value="${e.id}">${escapeHtml(e.name)}</option>`)
+                    .join('');
+
+            const body = document.getElementById('raid-body');
+
+            function keyBits(r) {
+                const f = r.fields || {};
+                const parts = [];
+                if (f.impact) parts.push('Impact: ' + f.impact);
+                if (f.likelihood) parts.push('Likelihood: ' + f.likelihood);
+                if (f.severity) parts.push('Severity: ' + f.severity);
+                if (f.approval_status) parts.push(f.approval_status);
+                if (r.priority) parts.push('Priority: ' + r.priority);
+                if (f.needed_by) parts.push('By: ' + f.needed_by);
+                if (r.due_date) parts.push('Due: ' + r.due_date);
+                return parts.slice(0, 2).join(' · ');
+            }
+
+            function statusControl(r) {
+                const statuses = (typesByKey[r.type] && typesByKey[r.type].statuses) || [r.status];
+                if (isGuest) return escapeHtml(r.status);
+                return `<select class="status-sel" data-id="${r.id}">${statuses
+                    .map((s) => `<option ${s === r.status ? 'selected' : ''}>${escapeHtml(s)}</option>`)
+                    .join('')}</select>`;
+            }
+
+            async function load() {
+                const params = new URLSearchParams();
+                const t = document.getElementById('filter-type').value;
+                const e = document.getElementById('filter-entity').value;
+                if (t) params.set('type', t);
+                if (e) params.set('entity_id', e);
+                const rows = await api('/records?' + params.toString());
+                body.innerHTML = rows.length
+                    ? rows
+                          .map((r) => {
+                              const label = (typesByKey[r.type] && typesByKey[r.type].label) || r.type;
+                              const ai = r.created_via === 'assistant'
+                                  ? '<span class="ai-chip">AI</span>'
+                                  : '';
+                              return `<tr>
+                                <td class="id-cell">${escapeHtml(r.id)}</td>
+                                <td><span class="type-badge">${escapeHtml(label)}</span></td>
+                                <td>${escapeHtml(r.title)}${ai}<div class="muted small">${escapeHtml(r.description || '')}</div></td>
+                                <td>${r.entity_name ? escapeHtml(r.entity_name) : '<span class="muted">—</span>'}</td>
+                                <td>${r.owner_name ? escapeHtml(r.owner_name) : '<span class="muted">—</span>'}</td>
+                                <td>${statusControl(r)}</td>
+                                <td class="key-bits">${escapeHtml(keyBits(r))}</td>
+                                <td class="muted small">${timeAgo(r.created_at)}<br>${escapeHtml(r.created_via === 'assistant' ? 'via assistant' : 'manual')}</td>
+                              </tr>`;
+                          })
+                          .join('')
+                    : `<tr><td colspan="8" class="text-muted text-center py-4">
+                        No records yet — tap the avatar (bottom-right) and speak one.</td></tr>`;
+            }
+
+            // Inline status change -> PATCH.
+            body.addEventListener('change', async (ev) => {
+                const sel = ev.target.closest('.status-sel');
+                if (!sel) return;
+                try {
+                    await api('/records/' + sel.dataset.id, {
+                        method: 'PATCH',
+                        body: { status: sel.value },
+                    });
+                } catch (err) {
+                    alert('Could not update status: ' + err.message);
+                    load();
+                }
+            });
+
+            document.getElementById('filter-type').onchange = load;
+            document.getElementById('filter-entity').onchange = load;
+            document.getElementById('refresh').onclick = load;
+            document.getElementById('new-record').onclick = () => {
+                const fab = document.getElementById('ai-fab');
+                if (fab) fab.click();
+            };
+            // Refresh when the assistant saves something.
+            document.addEventListener('records-updated', load);
+
+            await load();
+        </script>
+    </body>
+</html>

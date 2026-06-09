@@ -11,6 +11,15 @@ import {
     requireAdmin,
 } from './auth.js';
 import { log, logTaskChanges } from './audit.js';
+import { interpret, aiEnabled, splitFields } from './ai.js';
+import {
+    CATALOGUE,
+    FIELD_LABELS,
+    TYPES,
+    missingRequired,
+    normalizeStatus,
+    normalizeLevel,
+} from './records.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -373,6 +382,322 @@ app.post('/api/access-requests/:id/decline', requireAdmin, (req, res) => {
         req.params.id,
     );
     res.json({ ok: true });
+});
+
+// ============================== ENTITIES ==============================
+app.get('/api/entities', requireAuth, (_req, res) => {
+    res.json(
+        db.prepare('SELECT id, name, status FROM entities ORDER BY name').all(),
+    );
+});
+
+app.post('/api/entities', requireMember, (req, res) => {
+    const name = (req.body?.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+    db.prepare('INSERT OR IGNORE INTO entities (name) VALUES (?)').run(name);
+    res.status(201).json(
+        db.prepare('SELECT id, name, status FROM entities WHERE name = ?').get(name),
+    );
+});
+
+// ============================== RECORDS ==============================
+function serializeRecord(row) {
+    const entity = row.entity_id
+        ? db.prepare('SELECT name FROM entities WHERE id = ?').get(row.entity_id)
+        : null;
+    const owner = row.owner_id
+        ? db.prepare('SELECT name FROM users WHERE id = ?').get(row.owner_id)
+        : null;
+    let fields = {};
+    try {
+        fields = JSON.parse(row.fields || '{}');
+    } catch {
+        fields = {};
+    }
+    return {
+        id: row.id,
+        type: row.type,
+        title: row.title,
+        description: row.description,
+        entity_id: row.entity_id,
+        entity_name: entity ? entity.name : null,
+        work_stream: row.work_stream,
+        status: row.status,
+        priority: row.priority,
+        owner_id: row.owner_id,
+        owner_name: owner ? owner.name : row.owner_name || null,
+        due_date: row.due_date,
+        fields,
+        created_by: row.created_by,
+        created_via: row.created_via,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    };
+}
+
+function httpError(status, error, extra = {}) {
+    return Object.assign(new Error(error), { status, payload: { error, ...extra } });
+}
+
+// Resolve an entity name to an id, creating the entity if it's new.
+function resolveEntity(name) {
+    const n = (name || '').trim();
+    if (!n) return null;
+    const found = db
+        .prepare('SELECT id FROM entities WHERE name = ? COLLATE NOCASE')
+        .get(n);
+    if (found) return found.id;
+    const info = db.prepare('INSERT INTO entities (name) VALUES (?)').run(n);
+    return info.lastInsertRowid;
+}
+
+// Resolve an owner name to a known user id (or keep it as free text).
+function resolveOwner(name) {
+    const n = (name || '').trim();
+    if (!n) return { owner_id: null, owner_name: '' };
+    const u = db
+        .prepare('SELECT id FROM users WHERE name = ? COLLATE NOCASE AND active = 1')
+        .get(n);
+    return u ? { owner_id: u.id, owner_name: '' } : { owner_id: null, owner_name: n };
+}
+
+function nextRecordId(type) {
+    const prefix = CATALOGUE[type].prefix;
+    const rows = db
+        .prepare("SELECT id FROM records WHERE id LIKE ? ORDER BY id")
+        .all(prefix + '-%');
+    let max = 0;
+    for (const r of rows) {
+        const n = parseInt(String(r.id).split('-')[1], 10);
+        if (Number.isFinite(n) && n > max) max = n;
+    }
+    return `${prefix}-${String(max + 1).padStart(4, '0')}`;
+}
+
+const OPEN_ISH = ['Closed', 'Resolved', 'Done', 'Rejected', 'Cleared', 'Achieved', 'Invalid'];
+
+// Core create path shared by the manual API and the assistant. `via` is 'ui'|'assistant'.
+function createRecord(user, body, via) {
+    const type = body.type;
+    if (!CATALOGUE[type]) throw httpError(400, `Unknown record type: ${type}`);
+
+    const f = { ...(body.fields || {}) };
+    // Normalise level-ish + status fields server-side regardless of source.
+    for (const k of ['impact', 'likelihood', 'severity', 'priority']) {
+        if (f[k]) f[k] = normalizeLevel(f[k]);
+    }
+    f.status = normalizeStatus(type, f.status);
+
+    const missing = missingRequired(type, f);
+    if (missing.length)
+        throw httpError(400, 'Missing required fields', { missing });
+
+    const entity_id = resolveEntity(f.entity);
+    const { owner_id, owner_name } = resolveOwner(f.owner);
+
+    // Duplicate guard: same type + entity + title that's still open (unless forced).
+    if (!body.force) {
+        const dupes = db
+            .prepare('SELECT id, title, status FROM records WHERE type = ? AND IFNULL(entity_id,0) = IFNULL(?,0)')
+            .all(type, entity_id);
+        const norm = (s) => String(s || '').trim().toLowerCase();
+        const dup = dupes.find(
+            (d) => norm(d.title) === norm(f.title) && !OPEN_ISH.includes(d.status),
+        );
+        if (dup)
+            throw httpError(409, 'A similar open record already exists', {
+                duplicate: { id: dup.id, title: dup.title },
+            });
+    }
+
+    const id = nextRecordId(type);
+    db.prepare(`
+        INSERT INTO records (id, type, title, description, entity_id, work_stream,
+                             status, priority, owner_id, owner_name, due_date,
+                             fields, created_by, created_via)
+        VALUES (@id, @type, @title, @description, @entity_id, @work_stream,
+                @status, @priority, @owner_id, @owner_name, @due_date,
+                @fields, @created_by, @created_via)
+    `).run({
+        id,
+        type,
+        title: f.title,
+        description: f.description || '',
+        entity_id,
+        work_stream: f.work_stream || '',
+        status: f.status,
+        priority: f.priority || '',
+        owner_id,
+        owner_name,
+        due_date: f.due_date || f.needed_by || f.date || null,
+        fields: JSON.stringify(splitFields(f)),
+        created_by: user.id ?? null,
+        created_via: via,
+    });
+
+    const record = serializeRecord(
+        db.prepare('SELECT * FROM records WHERE id = ?').get(id),
+    );
+    const viaNote = via === 'assistant' ? ' via the AI assistant' : '';
+    log(user, {
+        entity_type: type,
+        entity_id: id,
+        entity_name: record.title,
+        action: 'create',
+        summary: `${user.name} created ${CATALOGUE[type].label.toLowerCase()} "${record.title}"${viaNote}`,
+    });
+
+    const where = record.entity_name ? ` under ${record.entity_name}` : '';
+    return { record, location: `${id} in the ${CATALOGUE[type].home}${where}` };
+}
+
+app.get('/api/records', requireAuth, (req, res) => {
+    const { type, entity_id } = req.query;
+    let sql = 'SELECT * FROM records WHERE 1=1';
+    const params = [];
+    if (type) {
+        sql += ' AND type = ?';
+        params.push(type);
+    }
+    if (entity_id) {
+        sql += ' AND entity_id = ?';
+        params.push(entity_id);
+    }
+    sql += ' ORDER BY created_at DESC, id DESC';
+    res.json(db.prepare(sql).all(...params).map(serializeRecord));
+});
+
+app.get('/api/records/:id', requireAuth, (req, res) => {
+    const row = db.prepare('SELECT * FROM records WHERE id = ?').get(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    res.json(serializeRecord(row));
+});
+
+app.post('/api/records', requireMember, (req, res) => {
+    try {
+        const { record, location } = createRecord(req.user, req.body || {}, 'ui');
+        res.status(201).json({ record, location });
+    } catch (err) {
+        res.status(err.status || 500).json(err.payload || { error: err.message });
+    }
+});
+
+app.patch('/api/records/:id', requireMember, (req, res) => {
+    const existing = db
+        .prepare('SELECT * FROM records WHERE id = ?')
+        .get(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    const before = serializeRecord(existing);
+    const b = req.body || {};
+
+    const updates = {};
+    for (const col of ['title', 'description', 'work_stream', 'priority', 'due_date']) {
+        if (col in b) updates[col] = b[col];
+    }
+    if ('status' in b) updates.status = normalizeStatus(existing.type, b.status);
+    if ('entity' in b) updates.entity_id = resolveEntity(b.entity);
+    if ('owner' in b) {
+        const { owner_id, owner_name } = resolveOwner(b.owner);
+        updates.owner_id = owner_id;
+        updates.owner_name = owner_name;
+    }
+    if (b.fields && typeof b.fields === 'object') {
+        const merged = { ...before.fields, ...b.fields };
+        updates.fields = JSON.stringify(merged);
+    }
+
+    if (Object.keys(updates).length) {
+        const set = Object.keys(updates).map((k) => `${k} = @${k}`).join(', ');
+        db.prepare(
+            `UPDATE records SET ${set}, updated_at = datetime('now') WHERE id = @id`,
+        ).run({ ...updates, id: req.params.id });
+    }
+    const after = serializeRecord(
+        db.prepare('SELECT * FROM records WHERE id = ?').get(req.params.id),
+    );
+    if ('status' in b && before.status !== after.status) {
+        log(req.user, {
+            entity_type: existing.type,
+            entity_id: after.id,
+            entity_name: after.title,
+            action: 'update',
+            field: 'status',
+            old_value: before.status,
+            new_value: after.status,
+            summary: `${req.user.name} changed status of "${after.title}" from "${before.status}" to "${after.status}"`,
+        });
+    }
+    res.json(after);
+});
+
+app.delete('/api/records/:id', requireMember, (req, res) => {
+    const existing = db
+        .prepare('SELECT * FROM records WHERE id = ?')
+        .get(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    db.prepare('DELETE FROM records WHERE id = ?').run(req.params.id);
+    log(req.user, {
+        entity_type: existing.type,
+        entity_id: existing.id,
+        entity_name: existing.title,
+        action: 'delete',
+        summary: `${req.user.name} deleted ${existing.type} "${existing.title}"`,
+    });
+    res.json({ ok: true });
+});
+
+// ============================== ASSISTANT ==============================
+// Static catalogue + context the voice assistant needs on the client.
+app.get('/api/assistant/catalogue', requireAuth, (_req, res) => {
+    res.json({
+        ai_enabled: aiEnabled(),
+        types: TYPES.map((t) => ({
+            type: t,
+            label: CATALOGUE[t].label,
+            home: CATALOGUE[t].home,
+            required: CATALOGUE[t].required,
+            statuses: CATALOGUE[t].statuses,
+        })),
+        field_labels: FIELD_LABELS,
+    });
+});
+
+// Understand an utterance. Read-only (writes nothing) — even guests may draft.
+app.post('/api/assistant/interpret', requireAuth, async (req, res) => {
+    const b = req.body || {};
+    const entities = db
+        .prepare('SELECT name FROM entities ORDER BY name')
+        .all()
+        .map((e) => e.name);
+    const owners = db
+        .prepare('SELECT name FROM users WHERE active = 1')
+        .all()
+        .map((u) => u.name);
+    try {
+        const result = await interpret({
+            transcript: String(b.transcript || ''),
+            draft: b.draft && typeof b.draft === 'object' ? b.draft : {},
+            pendingField: b.pendingField || '',
+            type: b.type || '',
+            entities,
+            owners,
+            today: new Date().toISOString().slice(0, 10),
+        });
+        res.json(result);
+    } catch (err) {
+        console.error('[assistant] interpret error:', err.message);
+        res.status(500).json({ error: 'Could not interpret that just now.' });
+    }
+});
+
+// Save a confirmed record. Goes through the same create path + permission gate.
+app.post('/api/assistant/commit', requireMember, (req, res) => {
+    try {
+        const { record, location } = createRecord(req.user, req.body || {}, 'assistant');
+        res.status(201).json({ record, location });
+    } catch (err) {
+        res.status(err.status || 500).json(err.payload || { error: err.message });
+    }
 });
 
 // ============================== STATIC ==============================
